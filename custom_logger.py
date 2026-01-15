@@ -16,10 +16,11 @@ class CustomLogger:
             return
             
         self.log_dir = "logs"
-        os.makedirs(self.log_dir, exist_ok=True)
+        self.json_log_dir = os.path.join(self.log_dir, "json")
+        os.makedirs(self.json_log_dir, exist_ok=True)
         
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        self.log_file = os.path.join(self.log_dir, f"execution_log_{timestamp}.json")
+        self.log_file = os.path.join(self.json_log_dir, f"execution_log_{timestamp}.json")
         self.log_list = [] # In-memory list to dump (or we can append line by line)
         
         # Initialize file as an empty list or just ready for appending objects?

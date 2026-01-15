@@ -1,0 +1,83 @@
+RELATÓRIO DE EXECUÇÃO RPA METAX
+Data: 15/01/2026 14:14:03
+==================================================
+
+RESUMO GERAL:
+- Total Detectado no RM: 65
+- Já Cadastrados (Ignorados): 0
+- Processados com Sucesso: 0
+- Erros / Falhas: 65
+- Sem Foto (Processados): 1
+
+==================================================
+
+LISTA SEM FOTO (MAS CADASTRADOS):
+ - ROGERIO  COSTA   PEREIRA
+
+LISTA DE ERROS:
+ - JEFERSON DOS SANTOS LOPES: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - CLENIO FERNANDES: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - PAULO DA SILVA NEGRAO: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - DELMARK GALENO DOS SANTOS: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - WILKSON FRANCISCO ASSUNCAO PEREIRA DE SANTANA: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - JOSIVAN MERCES DA SILVA: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - EVANDRO CARDOSO PINHEIRO: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - VALTER VENTURA DOS SANTOS: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - LUIS EDUARDO DE JESUS SANTOS: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - FRANCICLEI MANITO MACHADO: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - VINICIUS MALCHER DE JESUS: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - ITALO NAYRON FREITAS BALDEZ: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - CLEYTON JHORLES MARQUES DA CRUZ: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - FRANCISCO ANTONIO SOUSA DOS SANTOS: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - ROSEMIRO RODRIGUES DA SILVA: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - JOSE VALTECIO AMPARO DE OLIVEIRA FILHO: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - DERIK DOS SANTOS ARAUJO: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - OCEANDRO JOSE NASCIMENTO PEREIRA: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - RONI PINHEIRO CARDOSO: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - JONATHAN OLIVEIRA LOPES: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - ROBSON RODRIGUES DOS SANTOS: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - MATEUS MIRANDA SCHERRER: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - NAZARENO NASCIMENTO PINHEIRO: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - ROGERIO  COSTA   PEREIRA: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - DIOGO ADRIAN DOS SANTOS CHAVES: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - TIAGO DOS SANTOS: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - WALDINEI FARIAS DA SILVA: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - UESLEM CARVALHO DA SILVA: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - WENDSON JUNIOR GONCALVES LIMA: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - GREGORY JOSE COROY ROJAS: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - JOSE RIBAMAR DA COSTA OLIVEIRA: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - WENDELL MARDSON COSTA: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - DIONATA RABELO DOS SANTOS: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - MARIA CLEIA PEREIRA DOS SANTOS: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - ANDRE RODRIGUES DA SILVA: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - JOSE WELLINGTON OLIVEIRA DA SILVA: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - ADAO DA SILVA ALVES: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - GABRIEL CARLOS FERREIRA SANTOS: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - JOAO VICTOR SOUSA DA SILVA: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - NAILSON NUNES RIBEIRO: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - MANOEL JANIEL DA SILVA: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - DEYVISON ROCHA SANTOS: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - JOSE ROBERTO GOUVEIA XAVIER: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - FRANCIANO PEREIRA SILVA: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - JOSE RIBAMAR DE JESUS: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - RAIMUNDO FRANCISCO ANDRADE DA SILVA: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - LUAN CARLOS DA SILVA MAIA: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - ROGER BELO PACHECO: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - RAIMUNDO EUDE DA SILVA FREITAS: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - JACKSON MATOS RIBEIRO: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - JOSE ELIELTON PASTANA PEREIRA: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - WASHINGTON SOARES PINTO: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - GABRIEL DE ALCANTARA DOS SANTOS: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - PATRICIO FERNANDES SANTOS DE PAULO: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - JOSE ABRAAO SOUSA FILHO: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - FRANCISCO DAS CHAGAS SOUSA SILVA: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - ALESSANDRO DOS REIS CARVALHO: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - RAIMUNDO GOMES NASCIMENTO: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - WEVERTON FERNANDES MARIANO: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - MARCIO MARQUES DO NASCIMENTO: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - FRANCISCO JACKSON DA SILVA: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - MARCOS DOUGLAS MATIAS FERREIRA: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - JOSE FRANCISCO DA CONCEICAO: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - JUAN JOSE HERNANDEZ MARTINEZ: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+ - ENEILSON SARAIVA RIBEIRO: navegar_para_cadastro() got an unexpected keyword argument 'cpf_verificacao'
+

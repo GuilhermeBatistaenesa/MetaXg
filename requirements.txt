@@ -2,3 +2,7 @@ Office365-REST-Python-Client
 Pillow
 playwright
 pyodbc
+python-dotenv
+pytest
+pymupdf
+pywin32

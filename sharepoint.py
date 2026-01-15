@@ -5,10 +5,11 @@ from office365.runtime.auth.client_credential import ClientCredential
 from custom_logger import logger
 
 
-SITE_URL = "https://enesaengenharia.sharepoint.com/sites/Corporativo"
+from config import SHAREPOINT_SITE_URL, SHAREPOINT_CLIENT_ID, SHAREPOINT_CLIENT_SECRET
 
-CLIENT_ID = "1a1f030d-2177-4f0a-bb58-b9491bb7c8c7"
-CLIENT_SECRET = "ExR8Q~~PsBWzR4W50uQ7fXDemgl6MJ~XNcUanaDu"
+SITE_URL = SHAREPOINT_SITE_URL
+CLIENT_ID = SHAREPOINT_CLIENT_ID
+CLIENT_SECRET = SHAREPOINT_CLIENT_SECRET
 
 BASE_FOLDER = (
     "/sites/Corporativo/"
@@ -19,15 +20,19 @@ BASE_FOLDER = (
 )
 
 # CONEXÃO
-def conectar_sharepoint():
+def conectar_sharepoint() -> ClientContext:
+    """Establishing a connection to SharePoint."""
     creds = ClientCredential(CLIENT_ID, CLIENT_SECRET)
     return ClientContext(SITE_URL).with_credentials(creds)
 
 # UTILIDADES
+# UTILIDADES
 def normalizar(texto: str) -> str:
+    """Normalize text by removing accents and converting to uppercase."""
     return unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii")
 
-def mes_por_extenso(data):
+def mes_por_extenso(data: any) -> str:
+    """Returns the month name (in Portuguese) for a given date object."""
     meses = {
         1: "JANEIRO",
         2: "FEVEREIRO",
@@ -47,6 +52,16 @@ def mes_por_extenso(data):
 
 # DOWNLOAD DA FOTO
 def baixar_foto_funcionario(funcionario: dict, pasta_destino: str) -> str | None:
+    """
+    Downloads the employee's photo from SharePoint.
+    
+    Args:
+        funcionario (dict): Dictionary with employee data.
+        pasta_destino (str): Directory to save the photo.
+        
+    Returns:
+        str | None: Path to the downloaded photo or None if not found.
+    """
     ctx = conectar_sharepoint()
 
     nome = funcionario["NOME"]
@@ -57,6 +72,16 @@ def baixar_foto_funcionario(funcionario: dict, pasta_destino: str) -> str | None
     dia = f"{data.day:02d}"
 
     nome_pasta = normalizar(nome.upper())
+    
+    # 1. Tenta buscar localmente antes de conectar
+    import glob
+    cpf_limpo = ''.join(filter(str.isdigit, str(funcionario.get("CPF", ""))))
+    if cpf_limpo:
+        padrao = os.path.join(pasta_destino, f"*{cpf_limpo}*.pdf")
+        arquivos_locais = glob.glob(padrao)
+        if arquivos_locais:
+            logger.info(f"Foto já existe localmente: {nome}", details={"path": arquivos_locais[0]})
+            return arquivos_locais[0]
 
     caminho_pasta = f"{BASE_FOLDER}/{ano}/{mes}/{dia}/{nome_pasta}"
 

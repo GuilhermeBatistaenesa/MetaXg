@@ -1,0 +1,139 @@
+RELATÓRIO DE EXECUÇÃO RPA METAX
+Data: 15/01/2026 15:31:13
+==================================================
+
+RESUMO GERAL:
+- Total Detectado no RM: 65
+- Já Cadastrados (Ignorados): 0
+- Processados com Sucesso: 52
+- Erros / Falhas: 13
+- Sem Foto (Processados): 1
+
+==================================================
+
+LISTA DE SUCESSO:
+ - CLEYTON JHORLES MARQUES DA CRUZ
+ - CLENIO FERNANDES
+ - WASHINGTON SOARES PINTO
+ - DERIK DOS SANTOS ARAUJO
+ - JOSIVAN MERCES DA SILVA
+ - VINICIUS MALCHER DE JESUS
+ - JACKSON MATOS RIBEIRO
+ - LUIS EDUARDO DE JESUS SANTOS
+ - FRANCICLEI MANITO MACHADO
+ - DELMARK GALENO DOS SANTOS
+ - JEFERSON DOS SANTOS LOPES
+ - FRANCISCO ANTONIO SOUSA DOS SANTOS
+ - VALTER VENTURA DOS SANTOS
+ - WILKSON FRANCISCO ASSUNCAO PEREIRA DE SANTANA
+ - ROSEMIRO RODRIGUES DA SILVA
+ - PATRICIO FERNANDES SANTOS DE PAULO
+ - ROBSON RODRIGUES DOS SANTOS
+ - MATEUS MIRANDA SCHERRER
+ - NAZARENO NASCIMENTO PINHEIRO
+ - DIOGO ADRIAN DOS SANTOS CHAVES
+ - TIAGO DOS SANTOS
+ - WENDSON JUNIOR GONCALVES LIMA
+ - GREGORY JOSE COROY ROJAS
+ - FRANCISCO DAS CHAGAS SOUSA SILVA
+ - DIONATA RABELO DOS SANTOS
+ - MARIA CLEIA PEREIRA DOS SANTOS
+ - ANDRE RODRIGUES DA SILVA
+ - RAIMUNDO GOMES NASCIMENTO
+ - FRANCIANO PEREIRA SILVA
+ - JOAO VICTOR SOUSA DA SILVA
+ - MANOEL JANIEL DA SILVA
+ - ROGERIO  COSTA   PEREIRA
+ - JOSE ROBERTO GOUVEIA XAVIER
+ - UESLEM CARVALHO DA SILVA
+ - ALESSANDRO DOS REIS CARVALHO
+ - WENDELL MARDSON COSTA
+ - WEVERTON FERNANDES MARIANO
+ - MARCIO MARQUES DO NASCIMENTO
+ - GABRIEL CARLOS FERREIRA SANTOS
+ - FRANCISCO JACKSON DA SILVA
+ - NAILSON NUNES RIBEIRO
+ - GABRIEL DE ALCANTARA DOS SANTOS
+ - DEYVISON ROCHA SANTOS
+ - JOSE ABRAAO SOUSA FILHO
+ - RAIMUNDO FRANCISCO ANDRADE DA SILVA
+ - ROGER BELO PACHECO
+ - LUAN CARLOS DA SILVA MAIA
+ - RAIMUNDO EUDE DA SILVA FREITAS
+ - JUAN JOSE HERNANDEZ MARTINEZ
+ - JOSE FRANCISCO DA CONCEICAO
+ - MARCOS DOUGLAS MATIAS FERREIRA
+ - ENEILSON SARAIVA RIBEIRO
+
+LISTA SEM FOTO (MAS CADASTRADOS):
+ - ROGERIO  COSTA   PEREIRA
+
+LISTA DE ERROS:
+ - RONI PINHEIRO CARDOSO: Locator.fill: Timeout 30000ms exceeded.
+Call log:
+  - waiting for locator("#nomeBairro")
+    - locator resolved to <input readonly type="text" required="" id="nomeBairro" class="form-control input" onkeyup="this.value = this.value.toUpperCase();"/>
+    - fill("")
+  - attempting fill action
+    2 × waiting for element to be visible, enabled and editable
+      - element is not editable
+    - retrying fill action
+    - waiting 20ms
+    2 × waiting for element to be visible, enabled and editable
+      - element is not editable
+    - retrying fill action
+      - waiting 100ms
+    59 × waiting for element to be visible, enabled and editable
+       - element is not editable
+     - retrying fill action
+       - waiting 500ms
+
+ - PAULO DA SILVA NEGRAO: Erro no processo de cadastro
+ - EVANDRO CARDOSO PINHEIRO: Erro no processo de cadastro
+ - OCEANDRO JOSE NASCIMENTO PEREIRA: Erro no processo de cadastro
+ - ITALO NAYRON FREITAS BALDEZ: Locator.fill: Timeout 30000ms exceeded.
+Call log:
+  - waiting for locator("#nomeBairro")
+    - locator resolved to <input readonly type="text" required="" id="nomeBairro" class="form-control input" onkeyup="this.value = this.value.toUpperCase();"/>
+    - fill("")
+  - attempting fill action
+    2 × waiting for element to be visible, enabled and editable
+      - element is not editable
+    - retrying fill action
+    - waiting 20ms
+    2 × waiting for element to be visible, enabled and editable
+      - element is not editable
+    - retrying fill action
+      - waiting 100ms
+    59 × waiting for element to be visible, enabled and editable
+       - element is not editable
+     - retrying fill action
+       - waiting 500ms
+
+ - WALDINEI FARIAS DA SILVA: Locator.fill: Timeout 30000ms exceeded.
+Call log:
+  - waiting for locator("#nomeBairro")
+    - locator resolved to <input readonly type="text" required="" id="nomeBairro" class="form-control input" onkeyup="this.value = this.value.toUpperCase();"/>
+    - fill("")
+  - attempting fill action
+    2 × waiting for element to be visible, enabled and editable
+      - element is not editable
+    - retrying fill action
+    - waiting 20ms
+    2 × waiting for element to be visible, enabled and editable
+      - element is not editable
+    - retrying fill action
+      - waiting 100ms
+    59 × waiting for element to be visible, enabled and editable
+       - element is not editable
+     - retrying fill action
+       - waiting 500ms
+
+ - JOSE VALTECIO AMPARO DE OLIVEIRA FILHO: Erro no processo de cadastro
+ - JOSE RIBAMAR DA COSTA OLIVEIRA: Erro no processo de cadastro
+ - ADAO DA SILVA ALVES: Erro no processo de cadastro
+ - JONATHAN OLIVEIRA LOPES: Erro no processo de cadastro
+ - JOSE WELLINGTON OLIVEIRA DA SILVA: Erro no processo de cadastro
+ - JOSE RIBAMAR DE JESUS: Erro no processo de cadastro
+ - JOSE ELIELTON PASTANA PEREIRA: Erro no processo de cadastro
+
