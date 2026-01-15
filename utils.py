@@ -6,7 +6,17 @@ from PIL import Image
 from custom_logger import logger
 from mappings import MAPA_CARGOS_METAX
 
-def reduzir_foto_para_metax(caminho_original, tamanho_max_kb=40):
+def reduzir_foto_para_metax(caminho_original: str, tamanho_max_kb: int = 40) -> str | None:
+    """
+    Reduz a imagem para o tamanho máximo especificado, garantindo compatibilidade com o MetaX.
+    
+    Args:
+        caminho_original (str): Caminho para o arquivo de imagem original.
+        tamanho_max_kb (int, optional): Tamanho máximo em KB. Defaults to 40.
+    
+    Returns:
+        str | None: Caminho para a imagem temporária reduzida ou None em caso de falha.
+    """
     try:
         img = Image.open(caminho_original).convert("RGB")
         img = img.resize((300, 400), Image.LANCZOS)
@@ -45,7 +55,17 @@ def reduzir_foto_para_metax(caminho_original, tamanho_max_kb=40):
         return None
 
 
-def buscar_foto_por_cpf(pasta_fotos, cpf):
+def buscar_foto_por_cpf(pasta_fotos: str, cpf: str) -> str | None:
+    """
+    Busca uma foto na pasta especificada que contenha o CPF no nome do arquivo.
+    
+    Args:
+        pasta_fotos (str): Caminho para a pasta de fotos.
+        cpf (str): CPF do funcionário.
+        
+    Returns:
+        str | None: Caminho completo para a foto encontrada ou None.
+    """
     cpf_numerico = ''.join(filter(str.isdigit, str(cpf)))
 
     if not os.path.exists(pasta_fotos):
@@ -59,9 +79,11 @@ def buscar_foto_por_cpf(pasta_fotos, cpf):
     return None
 
 def ajustar_descricao_cargo(descricao_rm: str) -> str:
+    """Normaliza e ajusta a descrição do cargo baseando-se no mapa de cargos."""
     return MAPA_CARGOS_METAX.get(descricao_rm.strip().upper(), descricao_rm.strip().upper())
 
-def formatar_telefone_numerico(telefone):
+def formatar_telefone_numerico(telefone: str) -> str:
+    """Extrai apenas dígitos de um telefone e valida comprimento mínimo."""
     if not telefone:
         return ""
     # remove tudo que não for número
@@ -71,7 +93,11 @@ def formatar_telefone_numerico(telefone):
         return ""
     return telefone
 
-def formatar_data(data):
+def formatar_data(data: str | date | datetime) -> str:
+    """
+    Formata uma data para o padrão DD/MM/YYYY.
+    Aceita string, date ou datetime.
+    """
     if not data:
         return ""
 
@@ -84,7 +110,8 @@ def formatar_data(data):
     except ValueError:
         raise ValueError(f"Data de nascimento inválida: {data}")
 
-def normalizar_texto(txt):
+def normalizar_texto(txt: str) -> str:
+    """Remove acentos e converte para maiúsculas."""
     if not txt:
         return ""
     txt = txt.strip().upper()
@@ -92,7 +119,8 @@ def normalizar_texto(txt):
     txt = ''.join(c for c in txt if unicodedata.category(c) != 'Mn')
     return txt
 
-def formatar_pis(pis):
+def formatar_pis(pis: str) -> str:
+    """Formata o PIS garantindo 11 dígitos numéricos."""
     if not pis:
         return ""
     pis = ''.join(filter(str.isdigit, str(pis)))
@@ -102,7 +130,8 @@ def formatar_pis(pis):
         raise ValueError(f"PIS/PASEP inválido: {pis}")
     return pis
 
-def formatar_cpf(cpf):
+def formatar_cpf(cpf: str) -> str:
+    """Formata o CPF no padrão XXX.XXX.XXX-XX."""
     if not cpf:
         return ""
     cpf = ''.join(filter(str.isdigit, str(cpf)))

@@ -20,15 +20,19 @@ BASE_FOLDER = (
 )
 
 # CONEXÃO
-def conectar_sharepoint():
+def conectar_sharepoint() -> ClientContext:
+    """Establishing a connection to SharePoint."""
     creds = ClientCredential(CLIENT_ID, CLIENT_SECRET)
     return ClientContext(SITE_URL).with_credentials(creds)
 
 # UTILIDADES
+# UTILIDADES
 def normalizar(texto: str) -> str:
+    """Normalize text by removing accents and converting to uppercase."""
     return unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii")
 
-def mes_por_extenso(data):
+def mes_por_extenso(data: any) -> str:
+    """Returns the month name (in Portuguese) for a given date object."""
     meses = {
         1: "JANEIRO",
         2: "FEVEREIRO",
@@ -48,6 +52,16 @@ def mes_por_extenso(data):
 
 # DOWNLOAD DA FOTO
 def baixar_foto_funcionario(funcionario: dict, pasta_destino: str) -> str | None:
+    """
+    Downloads the employee's photo from SharePoint.
+    
+    Args:
+        funcionario (dict): Dictionary with employee data.
+        pasta_destino (str): Directory to save the photo.
+        
+    Returns:
+        str | None: Path to the downloaded photo or None if not found.
+    """
     ctx = conectar_sharepoint()
 
     nome = funcionario["NOME"]

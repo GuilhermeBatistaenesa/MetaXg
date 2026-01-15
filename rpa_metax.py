@@ -26,7 +26,15 @@ TEMPO_CAPTCHA_MS = 10000
 
 
 
-def anexar_foto(page, caminho_foto):
+def anexar_foto(page, caminho_foto: str) -> None:
+    """
+    Anexa a foto do funcionário no formulário do MetaX.
+    Realiza o redimensionamento antes do upload.
+    
+    Args:
+        page (Page): Objeto de página do Playwright.
+        caminho_foto (str): Caminho local para a foto original.
+    """
     try:
         foto_reduzida = reduzir_foto_para_metax(caminho_foto)
 
@@ -52,7 +60,17 @@ def anexar_foto(page, caminho_foto):
         logger.warn(f"Falha ao anexar foto: {e}", details={"error": str(e)})
 
 
-def selecionar_cargo_por_descricao(page, descricao_cargo):
+def selecionar_cargo_por_descricao(page, descricao_cargo: str) -> bool:
+    """
+    Tenta selecionar um cargo no combo box buscando pela descrição parcial.
+    
+    Args:
+        page (Page): Página do Playwright.
+        descricao_cargo (str): Descrição do cargo para busca.
+        
+    Returns:
+        bool: True se encontrou e selecionou, False caso contrário.
+    """
     descricao_cargo = descricao_cargo.strip().upper()
 
     page.wait_for_selector("#cargo", timeout=30000)
@@ -85,6 +103,12 @@ def selecionar_cargo_por_descricao(page, descricao_cargo):
 # NOVA FUNÇÃO DE INÍCIO DE SESSÃO (Retorna p, browser, page)
 # ==============================================================================
 def iniciar_sessao():
+    """
+    Inicia o browser, realiza login e navega até a tela inicial do sistema.
+    
+    Returns:
+        tuple: (playwright_instance, browser_instance, page_instance)
+    """
     # Inicia o Playwright, mas NÃO fecha (quem fecha é o main)
     # Obs: sync_playwright() deve ser usado com contexto. 
     # Para ser persistente, chamamos .start() manualmente
@@ -146,6 +170,7 @@ def iniciar_sessao():
 # FUNÇÃO DE CADASTRO (Recebe page logada)
 # ==============================================================================
 def navegar_para_cadastro(page):
+    """Navega do menu inicial até a tela de cadastro (Credenciamento)."""
     # Verifica se tem algum modal de erro travando a tela (bootbox)
     try:
         if page.is_visible("div.bootbox.modal"):
@@ -168,7 +193,8 @@ def navegar_para_cadastro(page):
     page.click('a[href="/Credenciamento/Index"]')
 
 
-def preencher_dados_pessoais(page, funcionario):
+def preencher_dados_pessoais(page, funcionario: dict) -> None:
+    """Preenche a aba de dados pessoais do funcionário."""
     nome = funcionario["NOME"]
     nome_pai = funcionario.get("NOME_PAI", "")
     nome_mae = funcionario.get("NOME_MAE", "")
@@ -327,7 +353,8 @@ def preencher_dados_pessoais(page, funcionario):
         logger.warn(f"Telefone emergencial inválido ou vazio: {telefone_rm}", details={"fone": telefone_rm})
 
 
-def preencher_documentos(page, funcionario):
+def preencher_documentos(page, funcionario: dict) -> None:
+    """Preenche a aba de documentos (RG, CTPS, etc)."""
     orgamoemissor = funcionario.get("ORGEMISSORIDENT", "")
     numerorg = funcionario.get("CARTIDENTIDADE", "")
     dataemissao = funcionario.get("DTEMISSAOIDENT", "")
@@ -398,7 +425,8 @@ def preencher_documentos(page, funcionario):
         logger.warn("Data de nascimento vazia")
 
 
-def preencher_endereco(page, funcionario):
+def preencher_endereco(page, funcionario: dict) -> None:
+    """Preenche endereço e tenta buscar via CEP."""
     cep = funcionario.get("CEP", "")
     endereconumero = funcionario.get("NUMERO", "")
 
@@ -476,7 +504,8 @@ def preencher_endereco(page, funcionario):
     logger.info(f"Número do endereço preenchido: {endereconumero}", details={"numero": endereconumero})
 
 
-def preencher_dados_profissionais(page, funcionario):
+def preencher_dados_profissionais(page, funcionario: dict) -> bool:
+    """Preenche dados profissionais (Cargo, Salário) e seleciona o cargo."""
     dataadmissao = funcionario.get("DATAADMISSAO", "")
     salario = funcionario.get("SALARIO", "")
 
@@ -525,7 +554,8 @@ def preencher_dados_profissionais(page, funcionario):
     return True
 
 
-def salvar_cadastro(page, cpf):
+def salvar_cadastro(page, cpf: str) -> bool:
+    """Clica em salvar rascunho e valida o sucesso da operação."""
     try:
         page.wait_for_function(
             """() => {
@@ -566,7 +596,18 @@ def salvar_cadastro(page, cpf):
         return False
 
 
-def cadastrar_funcionario(page, funcionario, caminho_foto=None):
+def cadastrar_funcionario(page, funcionario: dict, caminho_foto: str = None) -> bool:
+    """
+    Função principal que orquestra todo o cadastro de um funcionário.
+    
+    Args:
+        page: Página Playwright logada.
+        funcionario (dict): Dicionário com dados do funcionário.
+        caminho_foto (str, optional): Caminho pré-baixado da foto.
+        
+    Returns:
+        bool: True se salvo com sucesso, False caso contrário.
+    """
     nome = funcionario["NOME"]
     cpf = funcionario["CPF"]
     obra = funcionario.get("NUMERO_OBRA", "")

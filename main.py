@@ -8,7 +8,8 @@ from config import (
     DB_DRIVER, DB_SERVER, DB_NAME, DB_USER, DB_PASSWORD, PASTA_FOTOS
 )
 
-def obter_conexao():
+def obter_conexao() -> pyodbc.Connection:
+    """Estabelece conexão com o banco de dados SQL Server."""
     return pyodbc.connect(
         f"DRIVER={{{DB_DRIVER}}};"
         f"SERVER={DB_SERVER};"
@@ -17,7 +18,16 @@ def obter_conexao():
         f"PWD={DB_PASSWORD}"
     )
 
-def buscar_funcionarios_para_cadastro(data_admissao=None):
+def buscar_funcionarios_para_cadastro(data_admissao: str = None) -> list[dict]:
+    """
+    Busca funcionários admitidos na data especificada (ou hoje, se data não fornecida).
+    
+    Args:
+        data_admissao (str, optional): Data de admissão no formato YYYY-MM-DD. Defaults to None.
+        
+    Returns:
+        list[dict]: Lista de dicionários com os dados dos funcionários.
+    """
     if not data_admissao:
         data_admissao = datetime.now().strftime("%Y-%m-%d")
 
