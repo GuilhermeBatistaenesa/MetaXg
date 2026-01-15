@@ -4,11 +4,9 @@ import pyodbc
 from datetime import datetime
 from custom_logger import logger
 
-DB_DRIVER = "ODBC Driver 17 for SQL Server"
-DB_SERVER = "ENSP-SEVMBD"
-DB_NAME = "CORPORERM_NEW_4"
-DB_USER = "sa"
-DB_PASSWORD = "M@nageR@001"
+from config import (
+    DB_DRIVER, DB_SERVER, DB_NAME, DB_USER, DB_PASSWORD, PASTA_FOTOS
+)
 
 def obter_conexao():
     return pyodbc.connect(
@@ -200,7 +198,7 @@ def main():
 
     fotos = baixar_fotos_em_lote(
         funcionarios=funcionarios,
-        pasta_destino=r"P:\MetaX\fotos_funcionarios"
+        pasta_destino=PASTA_FOTOS
     )
 
     p, browser, page = iniciar_sessao()

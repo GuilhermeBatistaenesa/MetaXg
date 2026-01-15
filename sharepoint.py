@@ -5,10 +5,11 @@ from office365.runtime.auth.client_credential import ClientCredential
 from custom_logger import logger
 
 
-SITE_URL = "https://enesaengenharia.sharepoint.com/sites/Corporativo"
+from config import SHAREPOINT_SITE_URL, SHAREPOINT_CLIENT_ID, SHAREPOINT_CLIENT_SECRET
 
-CLIENT_ID = "1a1f030d-2177-4f0a-bb58-b9491bb7c8c7"
-CLIENT_SECRET = "ExR8Q~~PsBWzR4W50uQ7fXDemgl6MJ~XNcUanaDu"
+SITE_URL = SHAREPOINT_SITE_URL
+CLIENT_ID = SHAREPOINT_CLIENT_ID
+CLIENT_SECRET = SHAREPOINT_CLIENT_SECRET
 
 BASE_FOLDER = (
     "/sites/Corporativo/"
