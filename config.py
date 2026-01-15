@@ -4,6 +4,8 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # Sharepoint Configuration
 SHAREPOINT_SITE_URL = os.getenv("SHAREPOINT_SITE_URL")
 SHAREPOINT_CLIENT_ID = os.getenv("SHAREPOINT_CLIENT_ID")
@@ -26,6 +28,17 @@ PASTA_FOTOS = os.getenv("PASTA_FOTOS", r"P:\MetaX\fotos_funcionarios")
 LOG_DIR = "logs"
 SCREENSHOT_DIR = os.path.join(LOG_DIR, "screenshots")
 
+# Configuração de Dias Retroativos
+try:
+    DIAS_RETROATIVOS = int(os.getenv("DIAS_RETROATIVOS", "0"))
+except ValueError:
+    DIAS_RETROATIVOS = 0
+
+EMAIL_NOTIFICACAO = os.getenv("EMAIL_NOTIFICACAO", "")
+
 # Ensure directories exist
 os.makedirs(LOG_DIR, exist_ok=True)
 os.makedirs(SCREENSHOT_DIR, exist_ok=True)
+
+RELATORIOS_DIR = os.path.join(ROOT_DIR, 'relatorios')
+os.makedirs(RELATORIOS_DIR, exist_ok=True)

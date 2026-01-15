@@ -58,6 +58,13 @@ Contém a lógica complexa de compressão de imagem (`reduzir_foto_para_metax`).
 O sistema depende de "mapas" para traduzir o que vem do banco de dados (códigos ou descrições RM) para os IDs (`value`) esperados pelo HTML do MetaX.
 - **Importante:** Se um novo cargo for criado no RM ou uma nova opção surgir no MetaX, este arquivo deve ser atualizado.
 
+## 4. Configurações Especiais (`.env`)
+
+- **DIAS_RETROATIVOS**: Controla o intervalo de busca de funcionários.
+    - `0` (Padrão): Busca apenas nas admissões da data de referência (hoje ou data informada).
+    - `1`: Busca nas admissões da data de referência E do dia anterior.
+    - `N`: Busca nas admissões da data de referência E dos N dias anteriores.
+
 ---
 
 ## 4. Tratamento de Erros e Logs

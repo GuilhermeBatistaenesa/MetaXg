@@ -72,6 +72,16 @@ def baixar_foto_funcionario(funcionario: dict, pasta_destino: str) -> str | None
     dia = f"{data.day:02d}"
 
     nome_pasta = normalizar(nome.upper())
+    
+    # 1. Tenta buscar localmente antes de conectar
+    import glob
+    cpf_limpo = ''.join(filter(str.isdigit, str(funcionario.get("CPF", ""))))
+    if cpf_limpo:
+        padrao = os.path.join(pasta_destino, f"*{cpf_limpo}*.pdf")
+        arquivos_locais = glob.glob(padrao)
+        if arquivos_locais:
+            logger.info(f"Foto já existe localmente: {nome}", details={"path": arquivos_locais[0]})
+            return arquivos_locais[0]
 
     caminho_pasta = f"{BASE_FOLDER}/{ano}/{mes}/{dia}/{nome_pasta}"
 

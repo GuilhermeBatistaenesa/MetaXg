@@ -1,0 +1,13 @@
+RELATÓRIO DE EXECUÇÃO RPA METAX
+Data: 15/01/2026 15:51:11
+==================================================
+
+RESUMO GERAL:
+- Total Detectado no RM: 65
+- Já Cadastrados (Ignorados): 0
+- Processados com Sucesso: 0
+- Erros / Falhas: 0
+- Sem Foto (Processados): 0
+
+==================================================
+

@@ -2,23 +2,39 @@ import unicodedata
 from datetime import date, datetime
 import os
 import tempfile
+import fitz # PyMuPDF
 from PIL import Image
 from custom_logger import logger
 from mappings import MAPA_CARGOS_METAX
 
 def reduzir_foto_para_metax(caminho_original: str, tamanho_max_kb: int = 40) -> str | None:
     """
-    Reduz a imagem para o tamanho máximo especificado, garantindo compatibilidade com o MetaX.
-    
-    Args:
-        caminho_original (str): Caminho para o arquivo de imagem original.
-        tamanho_max_kb (int, optional): Tamanho máximo em KB. Defaults to 40.
-    
-    Returns:
-        str | None: Caminho para a imagem temporária reduzida ou None em caso de falha.
+    Reduz a imagem (ou converte PDF) para o tamanho máximo especificado.
+    Suporta .jpg, .png e .pdf.
     """
     try:
-        img = Image.open(caminho_original).convert("RGB")
+        img = None
+        
+        # 1. Se for PDF, converte para Imagem
+        if caminho_original.lower().endswith(".pdf"):
+            logger.info(f"Convertendo PDF para imagem: {caminho_original}", details={"path": caminho_original})
+            try:
+                doc = fitz.open(caminho_original)
+                pagina = doc.load_page(0)  # Pega a primeira página
+                pix = pagina.get_pixmap()
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                doc.close()
+            except Exception as e_pdf:
+                logger.error(f"Erro ao converter PDF: {e_pdf}", details={"error": str(e_pdf)})
+                return None
+        else:
+            # 2. Se for imagem normal
+            img = Image.open(caminho_original).convert("RGB")
+
+        if not img:
+            return None
+
+        # 3. Redimensionar para 300x400 (Padrão MetaX)
         img = img.resize((300, 400), Image.LANCZOS)
 
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
@@ -57,14 +73,7 @@ def reduzir_foto_para_metax(caminho_original: str, tamanho_max_kb: int = 40) -> 
 
 def buscar_foto_por_cpf(pasta_fotos: str, cpf: str) -> str | None:
     """
-    Busca uma foto na pasta especificada que contenha o CPF no nome do arquivo.
-    
-    Args:
-        pasta_fotos (str): Caminho para a pasta de fotos.
-        cpf (str): CPF do funcionário.
-        
-    Returns:
-        str | None: Caminho completo para a foto encontrada ou None.
+    Busca uma foto (ou PDF) na pasta especificada.
     """
     cpf_numerico = ''.join(filter(str.isdigit, str(cpf)))
 
@@ -73,7 +82,8 @@ def buscar_foto_por_cpf(pasta_fotos: str, cpf: str) -> str | None:
 
     for arquivo in os.listdir(pasta_fotos):
         nome = arquivo.lower()
-        if cpf_numerico in nome and nome.endswith((".jpg", ".jpeg", ".png")):
+        # Agora aceitamos .pdf também
+        if cpf_numerico in nome and nome.endswith((".jpg", ".jpeg", ".png", ".pdf")):
             return os.path.join(pasta_fotos, arquivo)
 
     return None

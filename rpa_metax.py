@@ -21,9 +21,8 @@ from config import (
     PASTA_FOTOS, SCREENSHOT_DIR
 )
 
-TIMEOUT = 30000
-TEMPO_CAPTCHA_MS = 10000 
-
+TIMEOUT = 60000 
+TEMPO_CAPTCHA_MS = 30000 
 
 
 def anexar_foto(page, caminho_foto: str) -> None:
@@ -98,7 +97,6 @@ def selecionar_cargo_por_descricao(page, descricao_cargo: str) -> bool:
     return False
 
 
-
 # ==============================================================================
 # NOVA FUNÇÃO DE INÍCIO DE SESSÃO (Retorna p, browser, page)
 # ==============================================================================
@@ -125,18 +123,21 @@ def iniciar_sessao():
         page.fill('#txtLogin', METAX_LOGIN)
         page.wait_for_selector('#txtSenha', timeout=TIMEOUT)
         page.fill('#txtSenha', METAX_PASSWORD)        
-        logger.info(f"Aguardando CAPTCHA ({TEMPO_CAPTCHA_MS/1000:.0f}s)...")
-        page.wait_for_timeout(TEMPO_CAPTCHA_MS)
+        logger.info("👉 AÇÃO NECESSÁRIA: Resolva o CAPTCHA e clique em 'Validar' MANUALMENTE.")
+        logger.info("Aguardando você acessar a próxima tela...")
+        
+        # Removemos o wait_for_timeout fixo e o click automático 
+        # para que o script avance assim que o usuário validar.
+        # page.wait_for_timeout(TEMPO_CAPTCHA_MS)
+        # page.click('button:has-text("Validar")')
 
-        page.click('button:has-text("Validar")')
-
-        page.wait_for_selector('#comboContrato', state='visible')
+        page.wait_for_selector('#comboContrato', state='visible', timeout=TIMEOUT)
 
         # Espera as opções carregarem
         page.wait_for_function(
             """() => {
                 const sel = document.querySelector('#comboContrato');
-                return sel && sel.options.length > 1;
+                return sel && sel.options.length >= 1;
             }""",
             timeout=TIMEOUT
         )
@@ -169,28 +170,168 @@ def iniciar_sessao():
 # ==============================================================================
 # FUNÇÃO DE CADASTRO (Recebe page logada)
 # ==============================================================================
-def navegar_para_cadastro(page):
-    """Navega do menu inicial até a tela de cadastro (Credenciamento)."""
-    # Verifica se tem algum modal de erro travando a tela (bootbox)
+def obter_todos_rascunhos(page) -> set[str]:
+    """
+    Navega para a lista de credenciamento e coleta TODOS os CPFs cadastrados (Rascunhos).
+    Gerencia paginação e exibição de 100 itens.
+    
+    Returns:
+        set: Conjunto de CPFs (apenas números) encontrados.
+    """
+    logger.info("Buscando lista de rascunhos existentes...")
+    cpfs_encontrados = set()
+    
+    # 1. Navegar para a lista
+    if not "CredenciamentoLista" in page.url:
+        page.goto("https://portal.metax.ind.br/CredenciamentoLista/Index", timeout=30000)
+    
+    # 2. Mudar exibição para 100 (se existir)
     try:
-        if page.is_visible("div.bootbox.modal"):
-            msg_erro = page.locator("div.bootbox-body").inner_text()
-            logger.warn(f"Modal detectado antes de iniciar: {msg_erro}", details={"modal": msg_erro})
-            # Tenta fechar
-            page.click("button.bootbox-close-button, button[data-bb-handler='ok']", timeout=2000)
+        # Tenta selecionar '100' no dropdown de registros (name geralmente é '...length')
+        # Selector genérico para o select de paginação
+        select_paginacao = page.locator("select[name*='length']")
+        if select_paginacao.count() > 0:
+            select_paginacao.select_option(value="100")
+            page.wait_for_timeout(1000) # Espera tabela recarregar
+    except Exception as e:
+        logger.warn(f"Não conseguiu mudar paginação para 100: {e}")
+
+    # 3. Limpar filtros
+    try:
+        page.click("text=Limpar", timeout=2000)
+        page.wait_for_timeout(1000)
     except:
         pass
 
-    # Navegação
-    page.click('a[href*="Credenciamento"]')
-    # Wait for URL or selector
+    # 4. FILTRAR POR RASCUNHO (Pedido crítico do usuário)
     try:
-        page.wait_for_url("**/CredenciamentoLista", timeout=TIMEOUT)
-    except:
-        pass 
+        logger.info("Aplicando filtro de Status: Rascunho...")
+        
+        # Tenta selecionar pelo label "Status:"
+        # O seletor pode variar, vamos tentar encontrar o select próximo ao label Status
+        # Opção A: Pelo ID se fosse conhecido, mas vamos por proximidade ou nome comum
+        # Geralmente em grids assim é name="Status" ou id="Status"
+        
+        # Estratégia: Encontrar o campo de seleção.
+        # Vamos tentar um seletor genérico que costuma funcionar nesses forms
+        # Dropdown que tem opção "Rascunho"
+        select_status = page.locator("select").filter(has_text="Rascunho").first
+        
+        if select_status.count() > 0:
+            select_status.select_option(label="Rascunho")
+        else:
+            # Fallback forçado: tentar achar o select associado ao label
+            # Assumindo layout padrão onde o label está antes ou acima
+             page.locator("text=Status").locator("..").locator("select").first.select_option(label="Rascunho")
 
-    page.wait_for_selector('a[href="/Credenciamento/Index"]', timeout=TIMEOUT)
-    page.click('a[href="/Credenciamento/Index"]')
+        page.wait_for_timeout(500)
+        
+        # Clicar em Pesquisar
+        page.click("text=Pesquisar")
+        logger.info("Botão Pesquisar clicado.")
+        
+        # Esperar recarregamento
+        page.wait_for_timeout(2000) 
+        
+    except Exception as e:
+        logger.error(f"Erro ao filtrar por rascunho: {e}")
+
+    # Garantir que a tabela carregou (espera header ou loading sumir)
+    try:
+        page.wait_for_selector("table tbody", timeout=10000)
+        # Espera um pouco mais para garantir renderização das linhas
+        page.wait_for_timeout(2000)
+    except Exception as e:
+        logger.warn(f"Tabela de rascunhos demorou a carregar: {e}")
+
+    # 4. Loop de Paginação
+    while True:
+        # Coleta CPFs da página atual
+        # Assume que CPF é a 2ª coluna (index 1) - Ajuste conforme HTML real
+        # Pelas imagens: Ações | CPF | Passaporte | Nome...
+        # Então CPF é td:nth-child(2)
+        
+        linhas = page.locator("table tbody tr")
+        count = linhas.count()
+        
+        if count == 0:
+            break
+            
+        # Verifica se é linha de "Nenhum registro"
+        texto_primeira = linhas.first.inner_text()
+        if "Nenhum registro" in texto_primeira:
+            break
+
+        # Extrai CPFs da página
+        elementos_cpf = page.locator("table tbody tr td:nth-child(2)").all_inner_texts()
+        
+        for texto in elementos_cpf:
+            cpf_limpo = ''.join(filter(str.isdigit, texto))
+            if cpf_limpo:
+                cpfs_encontrados.add(cpf_limpo)
+
+        logger.info(f"Coletados {len(elementos_cpf)} CPFs nesta página. Total acumulado: {len(cpfs_encontrados)}")
+
+        # Verifica botão Próximo
+        # Geralmente classe 'paginate_button next'
+        # Se tiver classe 'disabled', paramos.
+        
+        btn_proximo = page.locator("li.paginate_button.next")
+        if btn_proximo.count() == 0:
+            # Tenta outro seletor comum
+            btn_proximo = page.locator("a:has-text('Próximo')")
+            
+        if btn_proximo.count() > 0:
+            classe_btn = btn_proximo.get_attribute("class") or ""
+            if "disabled" not in classe_btn:
+                btn_proximo.click()
+                page.wait_for_timeout(1500)
+            else:
+                 break
+        else:
+            break # Fim das páginas
+
+    logger.info(f"Total de rascunhos mapeados: {len(cpfs_encontrados)}")
+    return cpfs_encontrados
+
+def navegar_para_cadastro(page) -> bool:
+    """
+    Navega do menu inicial até a tela de cadastro.
+    """
+    
+    # 1. Tenta limpar qualquer modal que esteja na frente (Sucesso/Erro anterior)
+    try:
+        if page.is_visible("div.bootbox.modal"):
+            msg = page.locator("div.bootbox-body").first.inner_text()
+            logger.warn(f"Modal detectado antes de iniciar: {msg}")
+            
+            page.evaluate("""
+                $('.bootbox.modal').modal('hide');
+                $('.modal-backdrop').remove(); 
+            """)
+            page.wait_for_selector("div.bootbox.modal", state="hidden", timeout=3000)
+    except Exception as e:
+        pass
+
+    # 2. Garante que estamos na lista (Home do Credenciamento)
+    if not "CredenciamentoLista" in page.url:
+        try:
+            page.click('a[href*="Credenciamento"]', timeout=5000)
+            page.wait_for_url("**/CredenciamentoLista", timeout=10000)
+        except:
+            logger.info("Tentando navegar via URL direta para a lista...")
+            page.goto("https://portal.metax.ind.br/CredenciamentoLista/Index", timeout=30000)
+
+    # 3. Clica no botão "CADASTRO"
+    try:
+        logger.info("Procurando botão CADASTRO...")
+        page.wait_for_selector("text=CADASTRO", timeout=10000)
+        page.click("text=CADASTRO")
+        return True
+    except:
+        logger.warn("Botão CADASTRO por texto falhou, tentando seletor href...")
+        page.click('a[href*="/Credenciamento/Index"]')
+        return True
 
 
 def preencher_dados_pessoais(page, funcionario: dict) -> None:
@@ -555,7 +696,7 @@ def preencher_dados_profissionais(page, funcionario: dict) -> bool:
 
 
 def salvar_cadastro(page, cpf: str) -> bool:
-    """Clica em salvar rascunho e valida o sucesso da operação."""
+    """Clica em salvar rascunho e valida o sucesso da operação, tratando modais."""
     try:
         page.wait_for_function(
             """() => {
@@ -569,21 +710,87 @@ def salvar_cadastro(page, cpf: str) -> bool:
         btn_rascunho.scroll_into_view_if_needed()
         page.wait_for_timeout(300)
 
+        # Clica em Salvar
         btn_rascunho.click()
 
-        max_retries = 10
-        for _ in range(max_retries):
-            page.wait_for_timeout(1000)
-            if "CredenciamentoLista" in page.url:
-                logger.info("RASCUNHO SALVO COM SUCESSO NO METAX")
-                return True
-        
-        logger.error(f"Rascunho NÃO foi salvo. URL atual: {page.url}", details={"url": page.url})
+        # Loop de verificação (URL mudou OU Modal de Sucesso apareceu)
+        max_retries = 30 # 30 segundos
+        start_time = datetime.now()
 
+        while (datetime.now() - start_time).seconds < max_retries:
+            page.wait_for_timeout(1000)
+
+            # 1. Sucesso por Redirecionamento
+            if "CredenciamentoLista" in page.url:
+                logger.info("RASCUNHO SALVO COM SUCESSO DO REDIRECIONAMENTO")
+                return True
+
+            # 2. Sucesso por Modal (Bootbox)
+            # Verifica se existe algum modal VISÍVEL
+            if page.locator("div.bootbox.modal").filter(has=page.locator(":scope:visible")).count() > 0:
+                
+                # Pega textos de todos os corpos de modal (pode ter ocultos)
+                # Usamos all_inner_texts() para não dar erro de Strict Mode
+                textos_modais = page.locator("div.bootbox-body").all_inner_texts()
+                
+                # Junta tudo numa string só para verificar
+                texto_completo = " | ".join(textos_modais).lower()
+                
+                if "sucesso" in texto_completo:
+                    logger.info("Modal de sucesso detectado!", details={"modais": textos_modais})
+                    
+                    # Tenta clicar no botão OK do modal VISÍVEL
+                    try:
+                        # Seletor específico para o botão OK dentro do modal que está visível (.in)
+                        btn_ok = page.locator("div.bootbox.modal.in button[data-bb-handler='ok']")
+                        if btn_ok.is_visible():
+                            btn_ok.click()
+                        else:
+                            # Fallback genérico
+                            page.locator("button.bootbox-close-button, button[data-bb-handler='ok']").last.click()
+                            
+                        logger.info("Botão OK do modal clicado.")
+                    except Exception as e_click:
+                        logger.warn(f"Falha ao clicar no OK: {e_click}. Tentando JS force...", details={"erro": str(e_click)})
+                        page.evaluate("""
+                            document.querySelectorAll('button[data-bb-handler="ok"]').forEach(b => {
+                                if(b.offsetParent !== null) b.click();
+                            })
+                        """)
+                    
+                    # Espera todos os modais sumirem
+                    try:
+                        page.wait_for_selector("div.bootbox.modal", state="hidden", timeout=3000)
+                    except:
+                        logger.warn("Modal não sumiu via clique. Forçando fechamento via JS.")
+                        page.evaluate("""
+                            $('.bootbox.modal').modal('hide');
+                            $('.modal-backdrop').remove(); 
+                        """)
+                    
+                    # SUCESSO CONFIRMADO
+                    logger.info("✅ CADASTRO REALIZADO COM SUCESSO!")
+                    return True
+                else:
+                    # É um modal de erro (ou aviso que não é sucesso)
+                    logger.error(f"Erro ao salvar (Modal): {textos_modais}", details={"modais": textos_modais})
+                    
+                    # Fecha o modal visível para não travar o fluxo
+                    try:
+                         page.locator("div.bootbox.modal.in button").first.click()
+                    except:
+                         page.evaluate("if(document.querySelector('.bootbox.modal.in')) $('.bootbox.modal.in').modal('hide');")
+                         
+                    return False
+        
+        # Se saiu do loop, é timeout
+        logger.error(f"Rascunho NÃO foi salvo (Timeout). URL atual: {page.url}", details={"url": page.url})
+
+        # Logar erros visíveis na tela (divs de alerta padrão)
         try:
-            alertas = page.locator(".alert, .validation-summary-errors, .bootbox-body").all_inner_texts()
+            alertas = page.locator(".alert, .validation-summary-errors").all_inner_texts()
             if alertas:
-                logger.error(f"Mensagens de erro na tela: {alertas}", details={"alertas": alertas})
+                logger.error(f"Alertas na tela: {alertas}", details={"alertas": alertas})
         except:
             pass
 
@@ -596,7 +803,7 @@ def salvar_cadastro(page, cpf: str) -> bool:
         return False
 
 
-def cadastrar_funcionario(page, funcionario: dict, caminho_foto: str = None) -> bool:
+def cadastrar_funcionario(page, funcionario: dict, caminho_foto: str = None) -> str:
     """
     Função principal que orquestra todo o cadastro de um funcionário.
     
@@ -606,14 +813,15 @@ def cadastrar_funcionario(page, funcionario: dict, caminho_foto: str = None) -> 
         caminho_foto (str, optional): Caminho pré-baixado da foto.
         
     Returns:
-        bool: True se salvo com sucesso, False caso contrário.
+        str: 'SUCESSO', 'ERRO', 'DUPLICADO', 'SEM_FOTO'
     """
     nome = funcionario["NOME"]
     cpf = funcionario["CPF"]
     obra = funcionario.get("NUMERO_OBRA", "")
     
     logger.info(f"Cadastrando {nome} | CPF {cpf}", details={"nome": nome, "cpf": cpf, "obra": obra})
-
+    
+    # Navegação simples (verificação de duplicidade já feita no main)
     navegar_para_cadastro(page)
 
     # FOTO
@@ -625,6 +833,13 @@ def cadastrar_funcionario(page, funcionario: dict, caminho_foto: str = None) -> 
         anexar_foto(page, caminho_final)
     else:
         logger.info(f"Nenhuma foto encontrada para CPF {cpf} – seguindo sem foto", details={"cpf": cpf})
+        # Decisão de negócio: Se não tem foto, segue ou para?
+        # O usuário pediu para relatar "quantos não acharam a foto".
+        # O script original continuava.
+        # Vou assumir que CONTINUA, mas reporta "sem foto" separadamente?
+        # Ou se a foto for obrigatória, retorna ERRO.
+        # No script original, ele continuava em anexar_foto. 
+        pass
 
     preencher_dados_pessoais(page, funcionario)
     preencher_documentos(page, funcionario)
@@ -632,6 +847,15 @@ def cadastrar_funcionario(page, funcionario: dict, caminho_foto: str = None) -> 
     
     sucesso_cargo = preencher_dados_profissionais(page, funcionario)
     if not sucesso_cargo:
-        return False
+        return 'ERRO'
 
-    return salvar_cadastro(page, cpf)
+    sucesso_salvar = salvar_cadastro(page, cpf)
+    if not sucesso_salvar:
+        return 'ERRO'
+    
+    # Se salvou com sucesso, mas não tinha foto, podemos retornar um status especial ou apenas SUCESSO?
+    # O usuário quer saber "quantos não acharam a foto".
+    # Podemos retornar SUCESSO_SEM_FOTO se quiser ser preciso, mas vamos manter simples.
+    # O chamador pode verificar se caminho_final era None.
+    
+    return 'SUCESSO'
