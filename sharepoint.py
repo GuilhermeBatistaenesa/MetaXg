@@ -77,11 +77,15 @@ def baixar_foto_funcionario(funcionario: dict, pasta_destino: str) -> str | None
     import glob
     cpf_limpo = ''.join(filter(str.isdigit, str(funcionario.get("CPF", ""))))
     if cpf_limpo:
-        padrao = os.path.join(pasta_destino, f"*{cpf_limpo}*.pdf")
+        # Busca qualquer imagem (jpg, png)
+        padrao = os.path.join(pasta_destino, f"*{cpf_limpo}*.*")
         arquivos_locais = glob.glob(padrao)
-        if arquivos_locais:
-            logger.info(f"Foto já existe localmente: {nome}", details={"path": arquivos_locais[0]})
-            return arquivos_locais[0]
+        # Filtra apenas imagens válidas e ignora PDFs antigos se existirem
+        imagens_validas = [f for f in arquivos_locais if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
+        
+        if imagens_validas:
+            logger.info(f"Foto já existe localmente: {nome}", details={"path": imagens_validas[0]})
+            return imagens_validas[0]
 
     caminho_pasta = f"{BASE_FOLDER}/{ano}/{mes}/{dia}/{nome_pasta}"
 

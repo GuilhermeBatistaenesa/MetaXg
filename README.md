@@ -33,7 +33,18 @@ Este projeto é uma automação (RPA) desenvolvida em Python para integrar o ban
     pip install -r requirements.txt
     playwright install chromium
     ```
-4.  **Configure as Variáveis de Ambiente**:
+4.  **Instale o Poppler (para conversão de PDFs)**:
+    - **Windows**: Baixe de https://github.com/oschwartz10612/poppler-windows/releases/
+    - Extraia o arquivo ZIP e adicione a pasta `bin` ao PATH do sistema
+    - Ou instale via Chocolatey: `choco install poppler`
+    - **Linux**: `sudo apt-get install poppler-utils` (Ubuntu/Debian) ou `sudo yum install poppler-utils` (CentOS/RHEL)
+    - **Mac**: `brew install poppler`
+    
+    > **Nota**: O código tenta usar PyMuPDF primeiro (mais rápido), e usa pdf2image como fallback. Se PyMuPDF não funcionar no seu ambiente, o Poppler é necessário para pdf2image.
+    
+    > **Dica**: Execute `python verificar_poppler.py` para verificar se o Poppler está instalado corretamente e obter instruções detalhadas de instalação.
+
+5.  **Configure as Variáveis de Ambiente**:
     - Copie o arquivo `.env.example` para `.env`.
     - Preencha as chaves com suas credenciais reais (SharePoint, Banco de Dados, MetaX).
 

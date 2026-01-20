@@ -12,7 +12,7 @@ SHAREPOINT_CLIENT_ID = os.getenv("SHAREPOINT_CLIENT_ID")
 SHAREPOINT_CLIENT_SECRET = os.getenv("SHAREPOINT_CLIENT_SECRET")
 
 # SQL Server Configuration
-DB_DRIVER = os.getenv("DB_DRIVER", "ODBC Driver 17 for SQL Server")
+DB_DRIVER = os.getenv("DB_DRIVER", "SQL Server")
 DB_SERVER = os.getenv("DB_SERVER")
 DB_NAME = os.getenv("DB_NAME")
 DB_USER = os.getenv("DB_USER")

@@ -204,6 +204,7 @@ def obter_todos_rascunhos(page) -> set[str]:
         pass
 
     # 4. FILTRAR POR RASCUNHO (Pedido crítico do usuário)
+    filtro_aplicado = False
     try:
         logger.info("Aplicando filtro de Status: Rascunho...")
         
@@ -219,22 +220,30 @@ def obter_todos_rascunhos(page) -> set[str]:
         
         if select_status.count() > 0:
             select_status.select_option(label="Rascunho")
+            filtro_aplicado = True
         else:
             # Fallback forçado: tentar achar o select associado ao label
             # Assumindo layout padrão onde o label está antes ou acima
-             page.locator("text=Status").locator("..").locator("select").first.select_option(label="Rascunho")
+            try:
+                page.locator("text=Status").locator("..").locator("select").first.select_option(label="Rascunho")
+                filtro_aplicado = True
+            except:
+                logger.warn("Não foi possível encontrar o campo de Status para filtrar")
 
-        page.wait_for_timeout(500)
-        
-        # Clicar em Pesquisar
-        page.click("text=Pesquisar")
-        logger.info("Botão Pesquisar clicado.")
-        
-        # Esperar recarregamento
-        page.wait_for_timeout(2000) 
+        if filtro_aplicado:
+            page.wait_for_timeout(500)
+            
+            # Clicar em Pesquisar
+            page.click("text=Pesquisar")
+            logger.info("Botão Pesquisar clicado.")
+            
+            # Esperar recarregamento
+            page.wait_for_timeout(2000)
+        else:
+            logger.error("⚠️ ATENÇÃO: Filtro de Rascunho NÃO foi aplicado! Coletando TODOS os registros.")
         
     except Exception as e:
-        logger.error(f"Erro ao filtrar por rascunho: {e}")
+        logger.error(f"Erro ao filtrar por rascunho: {e}. Continuando sem filtro (RISCO DE COLETAR TODOS OS REGISTROS)")
 
     # Garantir que a tabela carregou (espera header ou loading sumir)
     try:
@@ -265,12 +274,18 @@ def obter_todos_rascunhos(page) -> set[str]:
         # Extrai CPFs da página
         elementos_cpf = page.locator("table tbody tr td:nth-child(2)").all_inner_texts()
         
+        cpfs_pagina = 0
         for texto in elementos_cpf:
             cpf_limpo = ''.join(filter(str.isdigit, texto))
-            if cpf_limpo:
+            # Valida se tem 11 dígitos (CPF válido)
+            if cpf_limpo and len(cpf_limpo) == 11:
                 cpfs_encontrados.add(cpf_limpo)
+                cpfs_pagina += 1
+            elif cpf_limpo and len(cpf_limpo) > 0:
+                # Log de CPF inválido para debug
+                logger.warn(f"CPF inválido encontrado na lista (não tem 11 dígitos): {cpf_limpo}", details={"cpf": cpf_limpo, "tamanho": len(cpf_limpo)})
 
-        logger.info(f"Coletados {len(elementos_cpf)} CPFs nesta página. Total acumulado: {len(cpfs_encontrados)}")
+        logger.info(f"Coletados {cpfs_pagina} CPFs válidos nesta página. Total acumulado: {len(cpfs_encontrados)}")
 
         # Verifica botão Próximo
         # Geralmente classe 'paginate_button next'
@@ -285,7 +300,13 @@ def obter_todos_rascunhos(page) -> set[str]:
             classe_btn = btn_proximo.get_attribute("class") or ""
             if "disabled" not in classe_btn:
                 btn_proximo.click()
-                page.wait_for_timeout(1500)
+                # Espera a tabela recarregar antes de continuar
+                try:
+                    page.wait_for_selector("table tbody tr", timeout=5000)
+                    page.wait_for_timeout(1000)  # Espera adicional para garantir renderização
+                except Exception as e:
+                    logger.warn(f"Tabela não recarregou após mudar de página: {e}")
+                    # Tenta continuar mesmo assim
             else:
                  break
         else:
@@ -525,6 +546,21 @@ def preencher_documentos(page, funcionario: dict) -> None:
     page.fill('#numRG', numerorg)
 
     # EMISSAO RG
+    # Validação de data no futuro
+    if isinstance(dataemissao, (date, datetime)):
+       if dataemissao > datetime.now().date() if isinstance(dataemissao, date) else datetime.now():
+           logger.warn(f"Data de emissão do RG no futuro ({dataemissao}). Ajustando para HOJE.", details={"original": str(dataemissao)})
+           dataemissao = datetime.now()
+    elif isinstance(dataemissao, str):
+       try:
+           # Tenta converter para verificar
+           dt_obj = datetime.strptime(dataemissao, "%Y-%m-%d").date()
+           if dt_obj > datetime.now().date():
+                logger.warn(f"Data de emissão do RG no futuro ({dataemissao}). Ajustando para HOJE.", details={"original": dataemissao})
+                dataemissao = datetime.now()
+       except:
+           pass
+
     dataemissao = formatar_data(dataemissao)
     if dataemissao:
         page.wait_for_selector('#dtEmissaoRG', timeout=TIMEOUT)

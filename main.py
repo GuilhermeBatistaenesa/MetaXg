@@ -10,13 +10,48 @@ from config import (
 
 def obter_conexao() -> pyodbc.Connection:
     """Estabelece conexão com o banco de dados SQL Server."""
-    return pyodbc.connect(
-        f"DRIVER={{{DB_DRIVER}}};"
-        f"SERVER={DB_SERVER};"
-        f"DATABASE={DB_NAME};"
-        f"UID={DB_USER};"
-        f"PWD={DB_PASSWORD}"
-    )
+    # Lista de drivers ODBC para SQL Server (em ordem de preferência)
+    drivers_alternativos = [
+        DB_DRIVER,  # Tenta primeiro o driver configurado
+        "ODBC Driver 17 for SQL Server",
+        "ODBC Driver 18 for SQL Server",
+        "ODBC Driver 13 for SQL Server",
+        "SQL Server",  # Driver mais antigo, geralmente disponível
+        "SQL Server Native Client 11.0",
+    ]
+    
+    # Obtém lista de drivers disponíveis no sistema
+    drivers_disponiveis = [d for d in pyodbc.drivers()]
+    
+    # Tenta cada driver até encontrar um que funcione
+    ultimo_erro = None
+    for driver in drivers_alternativos:
+        if driver in drivers_disponiveis:
+            try:
+                logger.info(f"Tentando conectar com driver: {driver}", details={"driver": driver})
+                conexao = pyodbc.connect(
+                    f"DRIVER={{{driver}}};"
+                    f"SERVER={DB_SERVER};"
+                    f"DATABASE={DB_NAME};"
+                    f"UID={DB_USER};"
+                    f"PWD={DB_PASSWORD}"
+                )
+                logger.info(f"Conexão estabelecida com sucesso usando driver: {driver}", details={"driver": driver})
+                return conexao
+            except Exception as e:
+                ultimo_erro = e
+                logger.warn(f"Falha ao conectar com driver {driver}: {e}", details={"driver": driver, "erro": str(e)})
+                continue
+    
+    # Se nenhum driver funcionou, levanta o último erro
+    if ultimo_erro:
+        raise ConnectionError(f"Não foi possível conectar ao banco de dados. Último erro: {ultimo_erro}")
+    else:
+        raise ConnectionError(
+            f"Nenhum driver ODBC para SQL Server encontrado. "
+            f"Drivers disponíveis: {', '.join(drivers_disponiveis)}. "
+            f"Por favor, instale um driver ODBC para SQL Server."
+        )
 
 def buscar_funcionarios_para_cadastro(data_admissao: str = None) -> list[dict]:
     """
@@ -264,12 +299,18 @@ def main():
                 
                 if status == 'SUCESSO':
                     stats["sucesso"].append(nome)
+                    # Atualiza o cache de rascunhos após salvar com sucesso
+                    rascunhos_existentes.add(cpf_limpo)
+                    logger.info(f"Cache de rascunhos atualizado. CPF {cpf_limpo} adicionado ao cache.", details={"cpf": cpf_limpo})
                 elif status == 'DUPLICADO': 
                     # Fallback caso a verificação em cache falhe e a função interna detecte (se mantivermos lógica lá)
                     # Mas como removemos a varredura interna, isso só aconteceria se o cadastro falhasse por duplicidade no save
                     stats["duplicados"].append(nome)
                 else: # ERRO
-                    stats["falha"].append({"nome": nome, "motivo": "Erro no processo de cadastro"})
+                    # Salva o objeto COMPLETO para permitir o retry
+                    func_copia = func.copy()
+                    func_copia["motivo_erro"] = "Erro no processo de cadastro (Status inconclusivo)"
+                    stats["falha"].append(func_copia)
 
 
             except Exception as e:
@@ -285,35 +326,7 @@ def main():
                 except:
                     pass
 
-        # === TENTATIVA DE RETRY (REPESCAGEM) ===
-        if stats["falha"]:
-            logger.info(f"⚠️ Iniciando REPESCAGEM de {len(stats['falha'])} falhas...")
-            falhas_para_retry = stats["falha"][:] # Copia a lista
-            stats["falha"] = [] # Limpa para preencher com o resultado do retry
-            
-            for func_retry in falhas_para_retry:
-                nome = func_retry["NOME"]
-                cpf = func_retry["CPF"]
-                logger.info(f"🔄 Retentando cadastro de {nome}...")
-                
-                try:
-                    caminho_foto = fotos.get(cpf)
-                    status = cadastrar_funcionario(page, func_retry, caminho_foto)
-                    
-                    if status == 'SUCESSO':
-                        logger.info(f"✅ Recuperado com sucesso: {nome}")
-                        stats["sucesso"].append(nome)
-                    elif status == 'DUPLICADO':
-                         stats["duplicados"].append(nome)
-                    else:
-                        stats["falha"].append({"nome": nome, "motivo": "Falha no Retry"})
-                except Exception as e_retry:
-                     logger.error(f"❌ Falha definitiva em {nome}: {e_retry}")
-                     stats["falha"].append({"nome": nome, "motivo": f"Falha no Retry: {str(e_retry)}"})
-                     try:
-                        page.goto("https://portal.metax.ind.br/", timeout=5000)
-                     except:
-                        pass
+        # Retry logic removed as per user request (single attempt only)
             
     finally:
         logger.info("Fechando navegador...")
@@ -323,11 +336,12 @@ def main():
         logger.info("Gerando relatórios...")
         gerar_relatorio_txt(stats)
         enviar_relatorio_email(stats)
-        
         logger.info("===== FIM PROCESSO =====")
+        
+    
 
 
-    logger.info("===== FIM PROCESSO =====")
+
 
 
 if __name__ == "__main__":

@@ -46,7 +46,9 @@ def gerar_relatorio_txt(stats: dict):
             if stats['falha']:
                 f.write("LISTA DE ERROS:\n")
                 for item in stats['falha']:
-                    f.write(f" - {item['nome']}: {item['motivo']}\n")
+                    nome = item.get('NOME') or item.get('nome') or "Desconhecido"
+                    motivo = item.get('motivo_erro') or item.get('motivo') or "Motivo não especificado"
+                    f.write(f" - {nome}: {motivo}\n")
                 f.write("\n")
                 
         logger.info(f"Relatório TXT gerado em: {caminho_completo}")

@@ -1,0 +1,21 @@
+RELATÓRIO DE EXECUÇÃO RPA METAX
+Data: 20/01/2026 10:16:35
+==================================================
+
+RESUMO GERAL:
+- Total Detectado no RM: 4
+- Já Cadastrados (Ignorados): 2
+- Processados com Sucesso: 0
+- Erros / Falhas: 2
+- Sem Foto (Processados): 0
+
+==================================================
+
+LISTA DE JÁ CADASTRADOS (IGNORADOS):
+ - HELDER SILVA GOMES
+ - JANIEL BRITO SAMPAIO
+
+LISTA DE ERROS:
+ - LUCAS DE CARVALHO CASSIANO: Erro no processo de cadastro (Status inconclusivo)
+ - ROSWUART JOSE GONZALEZ MARCHAN: Erro no processo de cadastro (Status inconclusivo)
+

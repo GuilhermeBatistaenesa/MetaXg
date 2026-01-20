@@ -2,39 +2,30 @@ import unicodedata
 from datetime import date, datetime
 import os
 import tempfile
-import fitz # PyMuPDF
 from PIL import Image
 from custom_logger import logger
 from mappings import MAPA_CARGOS_METAX
 
+
 def reduzir_foto_para_metax(caminho_original: str, tamanho_max_kb: int = 40) -> str | None:
     """
-    Reduz a imagem (ou converte PDF) para o tamanho máximo especificado.
-    Suporta .jpg, .png e .pdf.
+    Reduz a imagem para o tamanho máximo especificado.
+    Suporta apenas arquivos de imagem (JPG, PNG).
+    PDFs não são mais suportados.
     """
     try:
-        img = None
-        
-        # 1. Se for PDF, converte para Imagem
-        if caminho_original.lower().endswith(".pdf"):
-            logger.info(f"Convertendo PDF para imagem: {caminho_original}", details={"path": caminho_original})
-            try:
-                doc = fitz.open(caminho_original)
-                pagina = doc.load_page(0)  # Pega a primeira página
-                pix = pagina.get_pixmap()
-                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                doc.close()
-            except Exception as e_pdf:
-                logger.error(f"Erro ao converter PDF: {e_pdf}", details={"error": str(e_pdf)})
-                return None
-        else:
-            # 2. Se for imagem normal
-            img = Image.open(caminho_original).convert("RGB")
-
-        if not img:
+        if not os.path.exists(caminho_original):
+            logger.warn(f"Arquivo não encontrado: {caminho_original}")
             return None
 
-        # 3. Redimensionar para 300x400 (Padrão MetaX)
+        # Tenta abrir como imagem
+        try:
+            img = Image.open(caminho_original).convert("RGB")
+        except Exception as e:
+            logger.warn(f"Falha ao abrir imagem {caminho_original}: {e}")
+            return None
+
+        # Redimensionar para 300x400 (Padrão MetaX)
         img = img.resize((300, 400), Image.LANCZOS)
 
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".jpg")
@@ -73,7 +64,8 @@ def reduzir_foto_para_metax(caminho_original: str, tamanho_max_kb: int = 40) -> 
 
 def buscar_foto_por_cpf(pasta_fotos: str, cpf: str) -> str | None:
     """
-    Busca uma foto (ou PDF) na pasta especificada.
+    Busca uma foto na pasta especificada.
+    Aceita apenas extensões de imagem.
     """
     cpf_numerico = ''.join(filter(str.isdigit, str(cpf)))
 
@@ -82,8 +74,8 @@ def buscar_foto_por_cpf(pasta_fotos: str, cpf: str) -> str | None:
 
     for arquivo in os.listdir(pasta_fotos):
         nome = arquivo.lower()
-        # Agora aceitamos .pdf também
-        if cpf_numerico in nome and nome.endswith((".jpg", ".jpeg", ".png", ".pdf")):
+        # Removido suporte a .pdf
+        if cpf_numerico in nome and nome.endswith((".jpg", ".jpeg", ".png")):
             return os.path.join(pasta_fotos, arquivo)
 
     return None

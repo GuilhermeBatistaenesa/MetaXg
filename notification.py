@@ -54,7 +54,9 @@ def enviar_relatorio_email(stats: dict):
         if stats['falha']:
             html_body += "<h4>❌ Falhas:</h4><ul>"
             for item in stats['falha']:
-                html_body += f"<li><b>{item['nome']}:</b> {item['motivo']}</li>"
+                nome = item.get('NOME') or item.get('nome') or "Desconhecido"
+                motivo = item.get('motivo_erro') or item.get('motivo') or "Motivo não especificado"
+                html_body += f"<li><b>{nome}:</b> {motivo}</li>"
             html_body += "</ul>"
             
         if stats['sem_foto']:

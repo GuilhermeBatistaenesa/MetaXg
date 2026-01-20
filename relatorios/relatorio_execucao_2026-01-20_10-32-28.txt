@@ -1,0 +1,21 @@
+RELATÓRIO DE EXECUÇÃO RPA METAX
+Data: 20/01/2026 10:32:28
+==================================================
+
+RESUMO GERAL:
+- Total Detectado no RM: 4
+- Já Cadastrados (Ignorados): 2
+- Processados com Sucesso: 0
+- Erros / Falhas: 2
+- Sem Foto (Processados): 0
+
+==================================================
+
+LISTA DE JÁ CADASTRADOS (IGNORADOS):
+ - HELDER SILVA GOMES
+ - JANIEL BRITO SAMPAIO
+
+LISTA DE ERROS:
+ - LUCAS DE CARVALHO CASSIANO: '>' not supported between instances of 'datetime.datetime' and 'datetime.date'
+ - ROSWUART JOSE GONZALEZ MARCHAN: '>' not supported between instances of 'datetime.datetime' and 'datetime.date'
+
