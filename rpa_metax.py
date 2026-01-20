@@ -548,9 +548,13 @@ def preencher_documentos(page, funcionario: dict) -> None:
     # EMISSAO RG
     # Validação de data no futuro
     if isinstance(dataemissao, (date, datetime)):
-       if dataemissao > datetime.now().date() if isinstance(dataemissao, date) else datetime.now():
+       # Garante que temos apenas DATA para comparação
+       data_obj = dataemissao.date() if isinstance(dataemissao, datetime) else dataemissao
+        
+       if data_obj > datetime.now().date():
            logger.warn(f"Data de emissão do RG no futuro ({dataemissao}). Ajustando para HOJE.", details={"original": str(dataemissao)})
            dataemissao = datetime.now()
+           
     elif isinstance(dataemissao, str):
        try:
            # Tenta converter para verificar

@@ -99,7 +99,8 @@ def baixar_foto_funcionario(funcionario: dict, pasta_destino: str) -> str | None
         return None
 
     for arq in arquivos:
-        if arq.name.upper().startswith("00_FOTO_"):
+        nome_arquivo = arq.name.upper()
+        if nome_arquivo.startswith("00_FOTO_") and nome_arquivo.endswith((".JPG", ".JPEG", ".PNG")):
             os.makedirs(pasta_destino, exist_ok=True)
             caminho_local = os.path.join(pasta_destino, arq.name)
 
