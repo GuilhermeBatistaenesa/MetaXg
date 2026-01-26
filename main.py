@@ -53,13 +53,15 @@ def obter_conexao() -> pyodbc.Connection:
             f"Por favor, instale um driver ODBC para SQL Server."
         )
 
-def buscar_funcionarios_para_cadastro(data_admissao: str = None) -> list[dict]:
+def buscar_funcionarios_para_cadastro(data_admissao: str = None, filtro_nomes: list[str] = None) -> list[dict]:
     """
-    Busca funcionários admitidos na data especificada (ou hoje, se data não fornecida).
-    Se DIAS_RETROATIVOS > 0, busca no intervalo [Data - Dias, Data].
+    Busca funcionários.
+    - Se filtro_nomes for fornecido, busca APENAS esses nomes (ignora data).
+    - Se não, busca por data de admissão (e dias retroativos).
     
     Args:
-        data_admissao (str, optional): Data final de admissão no formato YYYY-MM-DD. Defaults to None (hoje).
+        data_admissao (str, optional): Data final de admissão no formato YYYY-MM-DD.
+        filtro_nomes (list[str], optional): Lista de nomes para buscar especificamente.
         
     Returns:
         list[dict]: Lista de dicionários com os dados dos funcionários.
@@ -67,19 +69,40 @@ def buscar_funcionarios_para_cadastro(data_admissao: str = None) -> list[dict]:
     if not data_admissao:
         data_admissao = datetime.now().strftime("%Y-%m-%d")
 
-    # Mensagem de log ajustada
-    if DIAS_RETROATIVOS > 0:
-        logger.info(f"Buscando funcionários com admissão entre {data_admissao} e {DIAS_RETROATIVOS} dia(s) antes.", details={"data_ref": data_admissao, "retroativos": DIAS_RETROATIVOS})
+    # Condição WHERE dinâmica
+    if filtro_nomes and len(filtro_nomes) > 0:
+        logger.info(f"MODO FILTRO ATIVADO: Buscando {len(filtro_nomes)} funcionário(s) específico(s). Datas serão ignoradas.", details={"nomes": filtro_nomes})
+        
+        # Formata lista para SQL: 'NOME1', 'NOME2'
+        lista_sql = ", ".join([f"'{nome.strip().upper()}'" for nome in filtro_nomes])
+        where_clause = f"P.NOME IN ({lista_sql})"
+        
+        # Declara variaveis de data apenas para nao quebrar o script, mas nao serao usadas no filtro principal
+        datas_vars = f"""
+            DECLARE @DataFim DATE = '{data_admissao}';
+            DECLARE @DataInicio DATE = DATEADD(DAY, -{DIAS_RETROATIVOS}, @DataFim);
+        """
     else:
-        logger.info(f"Buscando funcionários com admissão em: {data_admissao}", details={"data_admissao": data_admissao})
+        # Modo Padrão (Por Data)
+        if DIAS_RETROATIVOS > 0:
+            logger.info(f"Buscando funcionários com admissão entre {data_admissao} e {DIAS_RETROATIVOS} dia(s) antes.", details={"data_ref": data_admissao, "retroativos": DIAS_RETROATIVOS})
+        else:
+            logger.info(f"Buscando funcionários com admissão em: {data_admissao}", details={"data_admissao": data_admissao})
+            
+        datas_vars = f"""
+            DECLARE @DataFim DATE = '{data_admissao}';
+            DECLARE @DataInicio DATE = DATEADD(DAY, -{DIAS_RETROATIVOS}, @DataFim);
+        """
+        where_clause = "CAST(F.DATAADMISSAO AS DATE) BETWEEN @DataInicio AND @DataFim"
+
 
     sql = f"""
-        DECLARE @DataFim DATE = '{data_admissao}';
-        DECLARE @DataInicio DATE = DATEADD(DAY, -{DIAS_RETROATIVOS}, @DataFim);
+        {datas_vars}
 
         SELECT 
             P.NOME,
             P.CPF,
+            F.CHAPA,
             P.SEXO,
             P.NATURALIDADE,
             P.GRAUINSTRUCAO,
@@ -156,7 +179,7 @@ def buscar_funcionarios_para_cadastro(data_admissao: str = None) -> list[dict]:
         ) MAE
 
         WHERE
-            CAST(F.DATAADMISSAO AS DATE) BETWEEN @DataInicio AND @DataFim
+            {where_clause}
             AND TRY_CAST(
                 CAST(
                     '<i>' + REPLACE(F.CODSECAO, '.', '</i><i>') + '</i>'
@@ -225,8 +248,6 @@ def buscar_funcionarios_para_cadastro(data_admissao: str = None) -> list[dict]:
             )
 
         ORDER BY F.DATAADMISSAO ASC;
-
-
     """
 
     logger.info("Executing SQL Query", details={"sql": sql})
@@ -242,10 +263,23 @@ from reporting import gerar_relatorio_txt
 def main():
     logger.info("===== INÍCIO PROCESSO SHAREPOINT + METAX =====")
 
-    funcionarios = buscar_funcionarios_para_cadastro()
+    # LISTA DE FUNCIONÁRIOS PONTUAIS (Deixe vazia [] ou None para rodar normal por data)
+    funcionarios_pontuais = [
+        "ALEXSANDRO DE ALMEIDA CARDOSO",
+        "ALEX DA SILVA ALEIXO",
+        "PAULO GARCIAS PIMENTA LOPES",
+        "RONIERE ASSUNCAO",
+        "JOSE JUNIOR DA SILVA LIMA",
+        "TAYRON HENRIKE DOS SANTOS AMORIM",
+        "WANDECARLOS DE ASSUNCAO OLIVEIRA"
+    ]
+    # funcionarios_pontuais = None
+
+    # Se pontuais for None, busca por data (padrão)
+    funcionarios = buscar_funcionarios_para_cadastro(filtro_nomes=funcionarios_pontuais)
 
     if not funcionarios:
-        logger.info("Nenhum funcionário para cadastrar hoje.")
+        logger.info("Nenhum funcionário encontrado para processar.")
         return
 
     logger.info(f"Funcionários a processar: {len(funcionarios)}", details={"total": len(funcionarios)})

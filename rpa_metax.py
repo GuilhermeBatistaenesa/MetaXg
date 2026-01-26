@@ -59,6 +59,24 @@ def anexar_foto(page, caminho_foto: str) -> None:
         logger.warn(f"Falha ao anexar foto: {e}", details={"error": str(e)})
 
 
+
+def fechar_modais_bloqueantes(page):
+    """Tenta fechar modais do Bootbox que estejam bloqueando a tela."""
+    try:
+        # Verifica se tem algum modal visível
+        if page.locator("div.bootbox.modal").is_visible():
+            logger.warn("Modal bloqueante detectado. FORÇANDO REMOÇÃO...")
+            
+            # Força bruta: Remove do DOM qualquer modal bootbox e o backdrop
+            page.evaluate("""
+                document.querySelectorAll('.bootbox.modal').forEach(e => e.remove());
+                document.querySelectorAll('.modal-backdrop').forEach(e => e.remove());
+                document.body.classList.remove('modal-open');
+            """)
+            page.wait_for_timeout(500)
+    except:
+        pass
+
 def selecionar_cargo_por_descricao(page, descricao_cargo: str) -> bool:
     """
     Tenta selecionar um cargo no combo box buscando pela descrição parcial.
@@ -93,6 +111,36 @@ def selecionar_cargo_por_descricao(page, descricao_cargo: str) -> bool:
             page.locator("#cargo").press("Tab")
             logger.info(f"Cargo selecionado: {texto_opcao}", details={"cargo": texto_opcao})
             return True
+
+    # Se chegou aqui, não encontrou match exato/startswith
+    
+    # 1. Tentar match parcial (contém) REVERSO (Verificar se PALAVRA CHAVE está na opção)
+    # Ex: RM="MOTORISTA PESADO", Opcao="MOTORISTA" -> "MOTORISTA" in "MOTORISTA PESADO"? Não.
+    # Ex: RM="MOTORISTA PESADO", Opcao="MOTORISTA" -> "MOTORISTA" in "MOTORISTA"? Sim.
+    
+    palavras_chave = descricao_cargo.split()
+    if palavras_chave:
+        primeira_palavra = palavras_chave[0] # Ex: MOTORISTA
+        if len(primeira_palavra) > 3: # Evita matching de "DE", "DA"
+            for i in range(opcoes.count()):
+                texto_opcao = opcoes.nth(i).inner_text().upper()
+                if primeira_palavra in texto_opcao:
+                     valor = opcoes.nth(i).get_attribute("value")
+                     page.select_option("#cargo", value=valor)
+                     page.locator("#cargo").press("Tab")
+                     logger.info(f"Cargo selecionado (Match Palavra-Chave '{primeira_palavra}'): {texto_opcao}", details={"alvo": descricao_cargo, "selecionado": texto_opcao})
+                     return True
+             
+    # 2. Logar opções disponíveis para debug
+    lista_opcoes = []
+    for i in range(opcoes.count()):
+        lista_opcoes.append(opcoes.nth(i).inner_text().upper())
+    
+    
+    # Converte lista para string para aparecer no log de console
+    # REMOVIDO LIMITE DE 30 PARA DEBUG TOTAL
+    opcoes_str = "; ".join(lista_opcoes) 
+    logger.warn(f"Cargo '{descricao_cargo}' não encontrado. Opções disponíveis: [{opcoes_str}]", details={"opcoes": lista_opcoes})
 
     return False
 
@@ -609,7 +657,12 @@ def preencher_documentos(page, funcionario: dict) -> None:
 def preencher_endereco(page, funcionario: dict) -> None:
     """Preenche endereço e tenta buscar via CEP."""
     cep = funcionario.get("CEP", "")
+    cep = funcionario.get("CEP", "")
     endereconumero = funcionario.get("NUMERO", "")
+    
+    # Ajuste para número 0 -> S/N
+    if str(endereconumero).strip() == "0":
+        endereconumero = "S/N"
 
     page.wait_for_selector('a[href="#menu1"]', timeout=TIMEOUT)
     page.click('a[href="#menu1"]')
@@ -618,38 +671,72 @@ def preencher_endereco(page, funcionario: dict) -> None:
         # Force remove readonly if present
         page.evaluate("document.querySelector('#CEP').removeAttribute('readonly')")
         page.fill('#CEP', cep_tentativa)
+        
+        # Nuke Modals antes de clicar
+        fechar_modais_bloqueantes(page)
+            
         page.wait_for_selector("#btnPesquisarCep", state="visible")
-        page.locator("#btnPesquisarCep").click()
+        
+        # Tenta clicar com force=True para ignorar overlays transparentes
+        try:
+             page.locator("#btnPesquisarCep").click(force=True)
+        except Exception:
+             # Fallback via JS se o click falhar
+             page.evaluate("document.getElementById('btnPesquisarCep').click()")
+
         page.wait_for_timeout(3000) 
 
     preencher_e_buscar_cep(cep)
 
     # Verifica se o bairro foi preenchido
     bairro_preenchido = page.input_value("#nomeBairro").strip()
+    fallback_usado = False
 
     if not bairro_preenchido:
         logger.warn(f"CEP {cep} não encontrou endereço. Tentando fallback...", details={"cep": cep})
-        preencher_e_buscar_cep("79582034")
+        
+        # Fallback inteligente por Estado
+        estado_rm = funcionario.get("ESTADO", "").strip().upper()
+        if estado_rm == "BA":
+             preencher_e_buscar_cep("40015000") # Salvador/BA (Comércio)
+        elif estado_rm == "PA":
+             preencher_e_buscar_cep("66010000") # Belém/PA (Campina)
+        else:
+             preencher_e_buscar_cep("79582034") # CEP Genérico (MS) - Chapadão
+             
+        fallback_usado = True
 
     # FALLBACK ENDEREÇO
-    estado_rm = funcionario.get("ESTADO", "").strip().upper()
     bairro_rm = funcionario.get("BAIRRO", "").strip().upper()
     rua_rm = funcionario.get("RUA", "").strip().upper()
 
     # ESTADO
+    fechar_modais_bloqueantes(page)
     estado_metax = page.locator("#comboEstado")
     estado_valor_atual = estado_metax.input_value().strip()
 
-    if estado_rm in MAPA_ESTADO_NATAL and MAPA_ESTADO_NATAL[estado_rm] != estado_valor_atual:
-        page.evaluate("""
-            const sel = document.getElementById('comboEstado');
-            sel.disabled = false;
-        """)
-        page.select_option("#comboEstado", value=MAPA_ESTADO_NATAL[estado_rm])
-        page.locator("#comboEstado").press("Tab")
-        logger.info(f"Estado ajustado via RM: {estado_rm}", details={"uf": estado_rm})
+    # Só altera o estado se NÃO usamos fallback. Se usou fallback, respeita o estado do CEP válido (ex: DF)
+    # exceto se o estado estiver vazio (falha no preenchimento automatico)
+    if not fallback_usado:
+        if estado_rm in MAPA_ESTADO_NATAL and MAPA_ESTADO_NATAL[estado_rm] != estado_valor_atual:
+            page.evaluate("""
+                const sel = document.getElementById('comboEstado');
+                sel.disabled = false;
+            """)
+            page.select_option("#comboEstado", value=MAPA_ESTADO_NATAL[estado_rm])
+            page.locator("#comboEstado").press("Tab")
+            logger.info(f"Estado ajustado via RM: {estado_rm}", details={"uf": estado_rm})
+    else:
+        # Se usou fallback mas o campo tá vazio, força o estado do RM (que deve bater com o fallback)
+        if not estado_valor_atual and estado_rm in MAPA_ESTADO_NATAL:
+             logger.warn(f"Fallback usado mas Estado vazio. Forçando Estado RM: {estado_rm}")
+             page.evaluate("document.getElementById('comboEstado').disabled = false;")
+             page.select_option("#comboEstado", value=MAPA_ESTADO_NATAL[estado_rm])
+        else:
+             logger.info(f"Fallback usado: Mantendo estado original do CEP ({estado_valor_atual}) para evitar erro de validação.")
 
     # BAIRRO
+    fechar_modais_bloqueantes(page)
     campo_bairro = page.locator("#nomeBairro")
     campo_bairro.wait_for(state="visible", timeout=TIMEOUT)
     page.evaluate("document.querySelector('#nomeBairro').disabled = false")
@@ -662,6 +749,7 @@ def preencher_endereco(page, funcionario: dict) -> None:
         logger.info(f"Bairro preenchido via RM: {bairro_rm}", details={"bairro": bairro_rm})
 
     # LOGRADOURO
+    fechar_modais_bloqueantes(page)
     campo_logradouro = page.locator("#comboLogradouro")
     campo_logradouro.wait_for(state="visible", timeout=TIMEOUT)
     page.evaluate("document.querySelector('#comboLogradouro').disabled = false")
@@ -674,6 +762,7 @@ def preencher_endereco(page, funcionario: dict) -> None:
         logger.info(f"Logradouro preenchido via RM: {rua_rm}", details={"logradouro": rua_rm})
 
     # NUMERO
+    fechar_modais_bloqueantes(page)
     campo_num = page.locator('input#numero.form-control.input')
     campo_num.wait_for(state="visible", timeout=TIMEOUT)
     campo_num.click()
@@ -737,6 +826,9 @@ def preencher_dados_profissionais(page, funcionario: dict) -> bool:
 
 def salvar_cadastro(page, cpf: str) -> bool:
     """Clica em salvar rascunho e valida o sucesso da operação, tratando modais."""
+    # Nuke modals antes de tentar salvar
+    fechar_modais_bloqueantes(page)
+
     try:
         page.wait_for_function(
             """() => {
@@ -747,6 +839,9 @@ def salvar_cadastro(page, cpf: str) -> bool:
         )
 
         btn_rascunho = page.locator("#btnSalvarRascunho")
+        # Garante scroll para o fim da página
+        page.keyboard.press("End")
+        page.wait_for_timeout(500)
         btn_rascunho.scroll_into_view_if_needed()
         page.wait_for_timeout(300)
 
@@ -754,11 +849,32 @@ def salvar_cadastro(page, cpf: str) -> bool:
         btn_rascunho.click()
 
         # Loop de verificação (URL mudou OU Modal de Sucesso apareceu)
-        max_retries = 30 # 30 segundos
+        max_retries = 90 # Aumentado para 90 segundos
         start_time = datetime.now()
+        last_click_time = datetime.now()
 
         while (datetime.now() - start_time).seconds < max_retries:
             page.wait_for_timeout(1000)
+            
+            # Retry do click se passar 20s e nada acontecer
+            if (datetime.now() - last_click_time).seconds > 20:
+                 if btn_rascunho.is_visible():
+                     logger.info("Retentando clique em Salvar (sem resposta há 20s)...")
+                     try:
+                        btn_rascunho.click(force=True)
+                     except:
+                        page.evaluate("document.getElementById('btnSalvarRascunho').click()")
+                 else:
+                     logger.warn("Botão Salvar NÃO está visível durante retry. Verificando erros...")
+                     # Verifica mensagens de erro na tela
+                     erros = page.locator(".text-danger, .field-validation-error").all_inner_texts()
+                     if erros:
+                         erros_texto = " | ".join([e for e in erros if e.strip()])
+                         if erros_texto:
+                             logger.error(f"Erros de validação encontrados na tela: {erros_texto}")
+                             return False # Aborta se tiver erros claros
+
+                 last_click_time = datetime.now()
 
             # 1. Sucesso por Redirecionamento
             if "CredenciamentoLista" in page.url:

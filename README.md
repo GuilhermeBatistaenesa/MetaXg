@@ -50,13 +50,32 @@ Este projeto é uma automação (RPA) desenvolvida em Python para integrar o ban
 
 ## ▶️ Como Executar
 
-Para rodar a automação para os funcionários admitidos **hoje**:
+Para rodar a automação (irá buscar funcionários admitidos hoje e dias retroativos conforme `.env`):
 
 ```bash
 python main.py
 ```
 
-Os logs de execução serão salvos na pasta `logs/`. Screenshots de erros serão salvos em `logs/screenshots/`.
+Os logs de execução serão salvos na pasta `logs/`. Screenshots de erros serão salvos em `logs/screenshots/`. Relatórios em `relatorios/`.
+
+## ❓ Troubleshooting (Resolução de Problemas)
+
+### 1. "Cargo não encontrado"
+Se o script acusar que o cargo do RM não existe no MetaX:
+- Verifique o log para ver as opções disponíveis listadas.
+- Adicione/Corrija o mapeamento em `mappings.py` na variável `MAPA_CARGOS_METAX`.
+
+### 2. Modais bloqueando a tela
+O script possui um mecanismo (`fechar_modais_bloqueantes`) que tenta fechar popups automaticamente. Se persistir, verifique se houve mudança no layout do MetaX.
+
+### 3. Timeout ao salvar
+Se a internet estiver lenta, o script tenta clicar em "Salvar" novamente e aguarda até 90 segundos.
+
+### 4. Portabilidade (Outros Computadores)
+Para rodar em outra máquina:
+1. **Instale Python e as dependências** (`requirements.txt`).
+2. **Copie o `.env`**: Configure as variáveis, especialmente `PASTA_FOTOS` se o caminho `P:\...` não existir na nova máquina.
+3. **Driver SQL**: Certifique-se que a máquina tem o "ODBC Driver for SQL Server" instalado.
 
 ## 📂 Estrutura do Projeto
 

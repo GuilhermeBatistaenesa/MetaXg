@@ -16,6 +16,7 @@ MAPA_CARGOS_METAX = {
     "MONTADOR DE ANDAIME": "MONTADOR DE ANDAIME",
     "PINTOR INDUSTRIAL": "PINTOR INDUSTRIAL",
     "COORDENADOR DE PLANEJAMENTO I": "COORDENADOR DE PLANEJAMENTO",
+    "MOTORISTA DE VEICULOS PESADOS": "MOT. VEICULO PESADO - DIRETA",
 }
 
 MAPA_ESCOLARIDADE = {
@@ -45,6 +46,7 @@ MAPA_ESTADO_CIVIL = {
     "P": "4",  # Separado
     "I": "5",  # Divorciado
     "V": "6",  # Viúvo
+    "O": "1",  # Outros -> Solteiro (Fallback)
 }
 
 MAPA_SEXO = {
