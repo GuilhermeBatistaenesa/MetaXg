@@ -1,3 +1,6 @@
+import argparse
+import os
+import unicodedata
 import uuid
 from datetime import datetime
 
@@ -64,17 +67,17 @@ def buscar_funcionarios_para_cadastro(data_admissao: str = None, filtro_nomes: l
     if not data_admissao:
         data_admissao = datetime.now().strftime("%Y-%m-%d")
 
+    datas_vars = f"""
+        DECLARE @DataFim DATE = '{data_admissao}';
+        DECLARE @DataInicio DATE = DATEADD(DAY, -{DIAS_RETROATIVOS}, @DataFim);
+    """
+
+    params = []
     if filtro_nomes and len(filtro_nomes) > 0:
-        logger.info(
-            f"MODO FILTRO ATIVADO: Buscando {len(filtro_nomes)} funcionario(s) especifico(s). Datas serao ignoradas.",
-            details={"nomes": filtro_nomes},
-        )
-        lista_sql = ", ".join([f"'{nome.strip().upper()}'" for nome in filtro_nomes])
-        where_clause = f"P.NOME IN ({lista_sql})"
-        datas_vars = f"""
-            DECLARE @DataFim DATE = '{data_admissao}';
-            DECLARE @DataInicio DATE = DATEADD(DAY, -{DIAS_RETROATIVOS}, @DataFim);
-        """
+        logger.info(f"MODO FILTRO ATIVADO: Buscando {len(filtro_nomes)} funcionario(s) especifico(s).")
+        placeholders = ", ".join(["?"] * len(filtro_nomes))
+        where_clause = f"UPPER(P.NOME) IN ({placeholders})"
+        params = [nome.strip().upper() for nome in filtro_nomes]
     else:
         if DIAS_RETROATIVOS > 0:
             logger.info(
@@ -86,11 +89,6 @@ def buscar_funcionarios_para_cadastro(data_admissao: str = None, filtro_nomes: l
                 f"Buscando funcionarios com admissao em: {data_admissao}",
                 details={"data_admissao": data_admissao},
             )
-
-        datas_vars = f"""
-            DECLARE @DataFim DATE = '{data_admissao}';
-            DECLARE @DataInicio DATE = DATEADD(DAY, -{DIAS_RETROATIVOS}, @DataFim);
-        """
         where_clause = "CAST(F.DATAADMISSAO AS DATE) BETWEEN @DataInicio AND @DataFim"
 
     sql = f"""
@@ -250,7 +248,10 @@ def buscar_funcionarios_para_cadastro(data_admissao: str = None, filtro_nomes: l
     logger.info("Executing SQL Query", details={"sql": sql})
     with obter_conexao() as conn:
         cursor = conn.cursor()
-        cursor.execute(sql)
+        if params:
+            cursor.execute(sql, params)
+        else:
+            cursor.execute(sql)
         colunas = [c[0] for c in cursor.description]
         return [dict(zip(colunas, row)) for row in cursor.fetchall()]
 
@@ -259,7 +260,62 @@ from notification import enviar_relatorio_email
 from reporting import gerar_relatorio_txt
 
 
+def _normalizar_nome(raw: str) -> str:
+    if not raw:
+        return ""
+    texto = raw.strip()
+    texto = unicodedata.normalize("NFKD", texto)
+    texto = "".join([c for c in texto if not unicodedata.combining(c)])
+    texto = " ".join(texto.split())
+    return texto.upper()
+
+
+def carregar_lista_nomes_txt(path: str) -> list[str]:
+    """
+    Carrega uma lista de nomes a partir de um TXT.
+    - Um nome por linha
+    - Ignora linhas vazias
+    - Ignora comentarios iniciados com #
+    - Normaliza (upper, remove acentos, strip, colapsa espacos)
+    - Remove duplicados preservando ordem
+    """
+    if not os.path.exists(path):
+        return []
+
+    nomes = []
+    vistos = set()
+    with open(path, "r", encoding="utf-8") as f:
+        for linha in f:
+            linha = linha.strip()
+            if not linha or linha.startswith("#"):
+                continue
+            nome = _normalizar_nome(linha)
+            if not nome or nome in vistos:
+                continue
+            vistos.add(nome)
+            nomes.append(nome)
+    return nomes
+
+
+def _ensure_output_dirs():
+    os.makedirs(os.path.join(ROOT_DIR, "logs"), exist_ok=True)
+    os.makedirs(os.path.join(ROOT_DIR, "logs", "screenshots"), exist_ok=True)
+    os.makedirs(os.path.join(ROOT_DIR, "relatorios"), exist_ok=True)
+    os.makedirs(os.path.join(ROOT_DIR, "json"), exist_ok=True)
+
+
+def _parse_args():
+    parser = argparse.ArgumentParser(description="RPA MetaXg")
+    parser.add_argument("--txt", dest="txt_path", help="Caminho do TXT para modo manual")
+    parser.add_argument("--dry-run", action="store_true", help="Nao envia e-mail (somente relatórios)")
+    parser.add_argument("--no-email", action="store_true", help="Nao envia e-mail")
+    parser.add_argument("--headless", action="store_true", help="Executa browser em modo headless")
+    parser.add_argument("--log-level", default=os.getenv("METAX_LOG_LEVEL", "INFO"), help="INFO|DEBUG|WARN|ERROR")
+    return parser.parse_args()
+
+
 def main():
+    args = _parse_args()
     execution_id = str(uuid.uuid4())
     started_at = datetime.now()
     output_manager = OutputManager(
@@ -269,7 +325,8 @@ def main():
         local_root=ROOT_DIR,
         started_at=started_at,
     )
-    logger.configure(output_manager, execution_id, started_at)
+    logger.configure(output_manager, execution_id, started_at, log_level=args.log_level)
+    _ensure_output_dirs()
 
     logger.info("===== INICIO PROCESSO SHAREPOINT + METAX =====")
 
@@ -278,14 +335,16 @@ def main():
         "object_name": OBJECT_NAME,
         "started_at": started_at.isoformat(),
         "finished_at": None,
-        "run_status": "OK",
+        "run_status": "CONSISTENT",
         "public_write_ok": None,
         "public_write_error": None,
         "totals": {
             "detected": 0,
-            "processed_success": 0,
-            "ignored": 0,
-            "failed": 0,
+            "action_saved": 0,
+            "verified_success": 0,
+            "saved_not_verified": 0,
+            "failed_action": 0,
+            "failed_verification": 0,
             "no_photo": 0,
         },
         "people": [],
@@ -298,18 +357,15 @@ def main():
     page = None
 
     try:
-        funcionarios_pontuais = [
-            "ALEXSANDRO DE ALMEIDA CARDOSO",
-            "ALEX DA SILVA ALEIXO",
-            "PAULO GARCIAS PIMENTA LOPES",
-            "RONIERE ASSUNCAO",
-            "JOSE JUNIOR DA SILVA LIMA",
-            "TAYRON HENRIKE DOS SANTOS AMORIM",
-            "WANDECARLOS DE ASSUNCAO OLIVEIRA",
-        ]
-        # funcionarios_pontuais = None
+        txt_path = args.txt_path or os.path.join(ROOT_DIR, "inputs", "cadastrar_metax.txt")
+        nomes_txt = carregar_lista_nomes_txt(txt_path)
 
-        funcionarios = buscar_funcionarios_para_cadastro(filtro_nomes=funcionarios_pontuais)
+        if nomes_txt:
+            logger.info("Modo TXT ativo: filtrando SQL por lista manual.")
+            funcionarios = buscar_funcionarios_para_cadastro(filtro_nomes=nomes_txt)
+        else:
+            logger.info("Modo normal: sem TXT, buscando via SQL padrao.")
+            funcionarios = buscar_funcionarios_para_cadastro(filtro_nomes=None)
 
         if not funcionarios:
             logger.info("Nenhum funcionario encontrado para processar.")
@@ -322,7 +378,7 @@ def main():
             pasta_destino=PASTA_FOTOS,
         )
 
-        p, browser, page = iniciar_sessao()
+        p, browser, page = iniciar_sessao(headless=args.headless)
 
         rascunhos_existentes = obter_todos_rascunhos(page)
 
@@ -331,21 +387,33 @@ def main():
             cpf_limpo = "".join(filter(str.isdigit, str(cpf)))
             nome = func["NOME"]
 
+            pessoa_started_at = datetime.now().isoformat()
             registro = {
                 "nome": nome,
                 "cpf": cpf_limpo,
-                "status": "FAILED",
+                "attempted": False,
+                "action_saved": False,
                 "verified": False,
-                "verification_detail": "",
-                "action_result": {},
-                "error": "",
+                "status_final": "FAILED",
+                "outcome": "FAILED_ACTION",
+                "errors": {
+                    "action_error": "",
+                    "verification_error": "",
+                },
+                "timestamps": {
+                    "started_at": pessoa_started_at,
+                    "saved_at": None,
+                    "verified_at": None,
+                },
                 "no_photo": False,
             }
 
             if cpf_limpo in rascunhos_existentes:
                 logger.info(f"Funcionario {nome} ja consta nos rascunhos (CACHE). Pulando...", details={"cpf": cpf})
-                registro["status"] = "IGNORED"
-                registro["verification_detail"] = "Ignorado: rascunho ja existente (cache)."
+                registro["attempted"] = False
+                registro["status_final"] = "FAILED"
+                registro["outcome"] = "FAILED_ACTION"
+                registro["errors"]["action_error"] = "Ignorado: rascunho ja existente (cache)."
                 manifest["people"].append(registro)
                 continue
 
@@ -362,9 +430,11 @@ def main():
                 action = cadastrar_funcionario(page, func, output_manager, caminho_foto)
             except Exception as e:
                 logger.error(f"Falha ao cadastrar {nome}: {e}", details={"cpf": cpf, "erro": str(e)})
-                registro["status"] = "FAILED"
-                registro["error"] = str(e)
-                registro["action_result"] = {"attempted": False, "saved": False, "error": str(e)}
+                registro["attempted"] = False
+                registro["action_saved"] = False
+                registro["status_final"] = "FAILED"
+                registro["outcome"] = "FAILED_ACTION"
+                registro["errors"]["action_error"] = str(e)
 
                 try:
                     page.goto("https://portal.metax.ind.br/", timeout=5000)
@@ -374,32 +444,51 @@ def main():
                 manifest["people"].append(registro)
                 continue
 
-            registro["action_result"] = action
+            # Blindagem do contrato de retorno do action
+            if not isinstance(action, dict):
+                action = {"attempted": False, "saved": False, "no_photo": False, "error": "Retorno invalido", "detail": ""}
+            action = {
+                "attempted": bool(action.get("attempted", False)),
+                "saved": bool(action.get("saved", False)),
+                "no_photo": bool(action.get("no_photo", False)),
+                "error": str(action.get("error", "")),
+                "detail": str(action.get("detail", "")),
+            }
+
+            registro["attempted"] = action["attempted"]
+            registro["action_saved"] = action["saved"]
             if action.get("no_photo"):
                 registro["no_photo"] = True
 
-            if action.get("saved"):
+            if registro["action_saved"]:
+                registro["timestamps"]["saved_at"] = datetime.now().isoformat()
+                logger.info(f"[VERIFY] start cpf={cpf_limpo}, nome={nome}")
                 try:
-                    verificado, detalhe = verificar_cadastro(page, func)
+                    verificado, detalhe = verificar_cadastro(page, func, output_manager)
                 except Exception as e:
-                    verificado = False
-                    detalhe = f"Erro na verificacao: {e}"
+                    verificado, detalhe = False, f"Erro na verificacao: {e}"
+                logger.info(f"[VERIFY] result cpf={cpf_limpo} verified={bool(verificado)} detail={detalhe}")
 
                 registro["verified"] = bool(verificado)
-                registro["verification_detail"] = detalhe or ""
-
                 if verificado:
-                    registro["status"] = "SUCCESS"
+                    registro["timestamps"]["verified_at"] = datetime.now().isoformat()
+                    registro["status_final"] = "SUCCESS"
+                    registro["outcome"] = "VERIFIED_SUCCESS"
                     rascunhos_existentes.add(cpf_limpo)
                     logger.info("Cache de rascunhos atualizado.", details={"cpf": cpf_limpo})
                 else:
-                    registro["status"] = "FAILED"
-                    registro["error"] = "Cadastro nao verificado."
+                    logger.warn(f"Verificacao falhou para {nome}: {detalhe}", details={"cpf": cpf, "motivo": detalhe})
+                    registro["status_final"] = "FAILED"
+                    if detalhe and detalhe.lower().startswith("erro na verificacao"):
+                        registro["outcome"] = "FAILED_VERIFICATION"
+                    else:
+                        registro["outcome"] = "SAVED_NOT_VERIFIED"
+                    registro["errors"]["verification_error"] = detalhe or "CPF nao encontrado na lista de rascunhos."
                     inconsistente = True
             else:
-                registro["status"] = "FAILED"
-                registro["verification_detail"] = "Salvamento nao confirmado."
-                registro["error"] = action.get("error") or "Falha ao salvar rascunho."
+                registro["status_final"] = "FAILED"
+                registro["outcome"] = "FAILED_ACTION"
+                registro["errors"]["action_error"] = action.get("error") or "Falha ao salvar rascunho."
 
             manifest["people"].append(registro)
 
@@ -415,14 +504,16 @@ def main():
 
         totals = {
             "detected": len(funcionarios),
-            "processed_success": len([p for p in manifest["people"] if p["status"] == "SUCCESS" and p["verified"]]),
-            "ignored": len([p for p in manifest["people"] if p["status"] == "IGNORED"]),
-            "failed": len([p for p in manifest["people"] if p["status"] == "FAILED"]),
+            "action_saved": len([p for p in manifest["people"] if p.get("action_saved")]),
+            "verified_success": len([p for p in manifest["people"] if p.get("outcome") == "VERIFIED_SUCCESS"]),
+            "saved_not_verified": len([p for p in manifest["people"] if p.get("outcome") == "SAVED_NOT_VERIFIED"]),
+            "failed_action": len([p for p in manifest["people"] if p.get("outcome") == "FAILED_ACTION"]),
+            "failed_verification": len([p for p in manifest["people"] if p.get("outcome") == "FAILED_VERIFICATION"]),
             "no_photo": len([p for p in manifest["people"] if p.get("no_photo")]),
         }
         manifest["totals"] = totals
 
-        if inconsistente:
+        if inconsistente or totals["saved_not_verified"] > 0:
             manifest["run_status"] = "INCONSISTENT"
 
         manifest["public_write_ok"] = output_manager.public_write_ok
@@ -434,7 +525,8 @@ def main():
 
         logger.info("Gerando relatorios...")
         gerar_relatorio_txt(manifest, output_manager)
-        enviar_relatorio_email(manifest)
+        if not args.dry_run and not args.no_email:
+            enviar_relatorio_email(manifest)
         logger.info("===== FIM PROCESSO =====")
 
 

@@ -1,10 +1,17 @@
 import os
+import sys
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
+# Resolve base dir for .env (exe dir when frozen, repo root otherwise)
+if getattr(sys, "frozen", False):
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+# Load environment variables from .env file (if present)
+load_dotenv(dotenv_path=os.path.join(BASE_DIR, ".env"))
+
+ROOT_DIR = BASE_DIR
 
 # Sharepoint Configuration
 SHAREPOINT_SITE_URL = os.getenv("SHAREPOINT_SITE_URL")

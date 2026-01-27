@@ -4,6 +4,7 @@ from datetime import date, datetime
 import os
 from PIL import Image
 import tempfile
+import re
 from custom_logger import logger
 from utils import (
     reduzir_foto_para_metax, buscar_foto_por_cpf, ajustar_descricao_cargo,
@@ -20,7 +21,7 @@ from config import (
     METAX_LOGIN, METAX_PASSWORD, METAX_URL_LOGIN,
     PASTA_FOTOS
 )
-from output_manager import OutputManager
+from output_manager import OutputManager, KIND_SCREENSHOTS, KIND_JSON
 
 TIMEOUT = 60000 
 TEMPO_CAPTCHA_MS = 30000 
@@ -149,7 +150,7 @@ def selecionar_cargo_por_descricao(page, descricao_cargo: str) -> bool:
 # ==============================================================================
 # NOVA FUNÇÃO DE INÍCIO DE SESSÃO (Retorna p, browser, page)
 # ==============================================================================
-def iniciar_sessao():
+def iniciar_sessao(headless: bool = False):
     """
     Inicia o browser, realiza login e navega até a tela inicial do sistema.
     
@@ -160,7 +161,12 @@ def iniciar_sessao():
     # Obs: sync_playwright() deve ser usado com contexto. 
     # Para ser persistente, chamamos .start() manualmente
     p = sync_playwright().start()
-    browser = p.chromium.launch(channel="chrome", headless=False)
+    try:
+        browser = p.chromium.launch(channel="chrome", headless=headless)
+    except Exception as e:
+        msg = "Falha ao iniciar navegador. Verifique se os browsers do Playwright estao instalados (python -m playwright install chromium)."
+        logger.error(msg, details={"erro": str(e)})
+        raise RuntimeError(msg) from e
     context = browser.new_context(ignore_https_errors=True)
     page = context.new_page()
 
@@ -658,8 +664,11 @@ def preencher_documentos(page, funcionario: dict) -> None:
 def preencher_endereco(page, funcionario: dict) -> None:
     """Preenche endereço e tenta buscar via CEP."""
     cep = funcionario.get("CEP", "")
-    cep = funcionario.get("CEP", "")
     endereconumero = funcionario.get("NUMERO", "")
+    estado_rm = (funcionario.get("ESTADO") or "").strip().upper()
+    if not estado_rm:
+        logger.warn("Estado (RM) vazio; usando fallback UF=SP", details={"cpf": funcionario.get("CPF")})
+        estado_rm = "SP"
     
     # Ajuste para número 0 -> S/N
     if str(endereconumero).strip() == "0":
@@ -697,7 +706,6 @@ def preencher_endereco(page, funcionario: dict) -> None:
         logger.warn(f"CEP {cep} não encontrou endereço. Tentando fallback...", details={"cep": cep})
         
         # Fallback inteligente por Estado
-        estado_rm = funcionario.get("ESTADO", "").strip().upper()
         if estado_rm == "BA":
              preencher_e_buscar_cep("40015000") # Salvador/BA (Comércio)
         elif estado_rm == "PA":
@@ -894,7 +902,7 @@ def salvar_cadastro(page, cpf: str, output_manager: OutputManager) -> dict:
 
             if "CredenciamentoLista" in page.url:
                 logger.info("Rascunho salvo (confirmacao por redirecionamento).")
-                return {"attempted": True, "saved": True, "error": None}
+                return {"attempted": True, "saved": True, "error": "", "detail": "confirmado_por_redirecionamento"}
 
             if page.locator("div.bootbox.modal").filter(has=page.locator(":scope:visible")).count() > 0:
                 textos_modais = page.locator("div.bootbox-body").all_inner_texts()
@@ -928,7 +936,7 @@ def salvar_cadastro(page, cpf: str, output_manager: OutputManager) -> dict:
                             $('.modal-backdrop').remove(); 
                         """)
 
-                    return {"attempted": True, "saved": True, "error": None}
+                    return {"attempted": True, "saved": True, "error": "", "detail": "confirmado_por_modal"}
                 else:
                     logger.error(f"Erro ao salvar (Modal): {textos_modais}", details={"modais": textos_modais})
 
@@ -937,7 +945,7 @@ def salvar_cadastro(page, cpf: str, output_manager: OutputManager) -> dict:
                     except Exception:
                         page.evaluate("if(document.querySelector('.bootbox.modal.in')) $('.bootbox.modal.in').modal('hide');")
 
-                    return {"attempted": True, "saved": False, "error": "Erro ao salvar (modal)."}
+                    return {"attempted": True, "saved": False, "error": "Erro ao salvar (modal).", "detail": ""}
 
         logger.error(f"Rascunho NAO foi salvo (Timeout). URL atual: {page.url}", details={"url": page.url})
 
@@ -952,7 +960,7 @@ def salvar_cadastro(page, cpf: str, output_manager: OutputManager) -> dict:
         filename = f"erro_salvar_{cpf}_{timestamp}__{output_manager.execution_id}.png"
         data = page.screenshot()
         output_manager.save_screenshot_bytes(filename, data)
-        return {"attempted": True, "saved": False, "error": "Timeout ao salvar rascunho."}
+        return {"attempted": True, "saved": False, "error": "Timeout ao salvar rascunho.", "detail": ""}
 
     except Exception as e:
         logger.error(f"Falha ao salvar rascunho: {e}", details={"error": str(e)})
@@ -960,7 +968,7 @@ def salvar_cadastro(page, cpf: str, output_manager: OutputManager) -> dict:
         filename = f"erro_excecao_salvar_{cpf}_{timestamp}__{output_manager.execution_id}.png"
         data = page.screenshot()
         output_manager.save_screenshot_bytes(filename, data)
-        return {"attempted": True, "saved": False, "error": str(e)}
+        return {"attempted": True, "saved": False, "error": str(e), "detail": ""}
 
 
 def cadastrar_funcionario(page, funcionario: dict, output_manager: OutputManager, caminho_foto: str = None) -> dict:
@@ -996,23 +1004,136 @@ def cadastrar_funcionario(page, funcionario: dict, output_manager: OutputManager
 
     sucesso_cargo = preencher_dados_profissionais(page, funcionario)
     if not sucesso_cargo:
-        return {"attempted": True, "saved": False, "error": "Cargo nao encontrado no MetaX.", "no_photo": no_photo}
+        return {"attempted": True, "saved": False, "no_photo": no_photo, "error": "Cargo nao encontrado no MetaX.", "detail": ""}
 
     resultado_salvar = salvar_cadastro(page, cpf, output_manager)
     if not resultado_salvar.get("saved"):
         return {
             "attempted": True,
             "saved": False,
-            "error": resultado_salvar.get("error") or "Falha ao salvar rascunho.",
             "no_photo": no_photo,
+            "error": resultado_salvar.get("error") or "Falha ao salvar rascunho.",
+            "detail": resultado_salvar.get("detail") or "",
         }
 
-    return {"attempted": True, "saved": True, "error": None, "no_photo": no_photo}
+    return {"attempted": True, "saved": True, "no_photo": no_photo, "error": "", "detail": resultado_salvar.get("detail") or ""}
 
 
-def verificar_cadastro(page, funcionario: dict) -> tuple[bool, str]:
+def verificar_cadastro(page, funcionario: dict, output_manager: OutputManager, max_paginas: int = 3) -> tuple[bool, str]:
     """
-    Placeholder de verificacao pos-acao.
-    Substitua este metodo com a checagem real (RM/SharePoint/API).
+    Verifica se o CPF aparece na lista de rascunhos apos o salvamento.
+    Retorna (True, msg) se encontrado; caso contrario (False, msg).
     """
-    return False, "Verificacao nao implementada. Plugue aqui a checagem real."
+    try:
+        cpf = funcionario.get("CPF")
+        cpf_limpo = "".join(filter(str.isdigit, str(cpf)))
+        if not cpf_limpo:
+            return False, "CPF invalido para verificacao."
+
+        if "CredenciamentoLista" not in page.url:
+            page.goto("https://portal.metax.ind.br/CredenciamentoLista/Index", timeout=30000)
+
+        # Aplica filtro de Status: Rascunho (mesma estrategia do fluxo principal)
+        filtro_aplicado = False
+        try:
+            select_status = page.locator("select").filter(has_text="Rascunho").first
+            if select_status.count() > 0:
+                select_status.select_option(label="Rascunho")
+                filtro_aplicado = True
+            else:
+                page.locator("text=Status").locator("..").locator("select").first.select_option(label="Rascunho")
+                filtro_aplicado = True
+
+            if filtro_aplicado:
+                page.wait_for_timeout(500)
+                page.click("text=Pesquisar")
+                page.wait_for_timeout(1500)
+        except Exception as e:
+            logger.warn(f"Falha ao aplicar filtro de rascunho: {e}")
+
+        search_usado = False
+        # Se existir campo de busca (DataTables), usa para filtrar pelo CPF
+        try:
+            search_input = page.locator("input[type='search']").first
+            if search_input.count() > 0 and search_input.is_visible():
+                search_usado = True
+                search_input.fill(cpf_limpo)
+                page.wait_for_timeout(1000)
+        except Exception:
+            # Sem busca ou falha no campo, segue para varredura
+            pass
+
+        linhas_texto = []
+        # Varredura paginada limitada
+        pagina_atual = 0
+        while pagina_atual < max_paginas:
+            try:
+                page.wait_for_selector("table tbody", timeout=10000)
+            except Exception:
+                pass
+
+            linhas = page.locator("table tbody tr")
+            for i in range(linhas.count()):
+                texto = linhas.nth(i).inner_text()
+                linhas_texto.append(texto)
+                encontrados = re.findall(r"\\b\\d{11}\\b", texto)
+                if cpf_limpo in encontrados:
+                    return True, "CPF encontrado na lista de rascunhos."
+
+            btn_proximo = page.locator("li.paginate_button.next")
+            if btn_proximo.count() > 0:
+                classe_btn = btn_proximo.get_attribute("class") or ""
+                if "disabled" in classe_btn:
+                    break
+                btn_proximo.click()
+                page.wait_for_timeout(1000)
+                pagina_atual += 1
+            else:
+                break
+
+        detalhe = f"cpf nao encontrado apos {pagina_atual + 1} tentativas"
+        _registrar_evidencia_verificacao(
+            page=page,
+            output_manager=output_manager,
+            cpf=cpf_limpo,
+            filtro_aplicado=filtro_aplicado,
+            search_usado=search_usado,
+            linhas_texto=linhas_texto,
+        )
+        return False, detalhe
+    except Exception as e:
+        try:
+            _registrar_evidencia_verificacao(
+                page=page,
+                output_manager=output_manager,
+                cpf="".join(filter(str.isdigit, str(funcionario.get("CPF")))),
+                filtro_aplicado=False,
+                search_usado=False,
+                linhas_texto=[],
+            )
+        except Exception:
+            pass
+        return False, f"Erro na verificacao: {e}"
+
+
+def _registrar_evidencia_verificacao(
+    page,
+    output_manager: OutputManager,
+    cpf: str,
+    filtro_aplicado: bool,
+    search_usado: bool,
+    linhas_texto: list[str],
+):
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    filename = f"verify_fail_{cpf}_{timestamp}__{output_manager.execution_id}.png"
+    data = page.screenshot()
+    output_manager.save_screenshot_bytes(filename, data)
+
+    debug = {
+        "url": page.url,
+        "total_linhas": len(linhas_texto),
+        "linhas_sample": linhas_texto[:5],
+        "filtro_aplicado": filtro_aplicado,
+        "search_usado": search_usado,
+    }
+    output_manager.write_json(KIND_JSON, f"verify_debug_{cpf}_{timestamp}__{output_manager.execution_id}.json", debug)

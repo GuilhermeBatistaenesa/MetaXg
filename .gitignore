@@ -66,6 +66,9 @@ fotos_funcionarios/
 *.log
 *.txt
 screenshots/
+dist/
+build/*
+!build/metaxg.spec
 
 # Config files with sensitive data
 config.py

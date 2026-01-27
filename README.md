@@ -90,3 +90,8 @@ Para rodar em outra máquina:
 ## 📚 Documentação
 
 A documentação técnica detalhada e versionada encontra-se na pasta `docs/`.
+
+## Teste manual de verificacao (auditoria)
+1. Forcar `verificar_cadastro` retornar True -> deve gerar `VERIFIED_SUCCESS`.
+2. Forcar `verificar_cadastro` retornar False -> `action_saved` pode ser true, mas `outcome = SAVED_NOT_VERIFIED` e `run_status = INCONSISTENT`.
+3. Forcar excecao na verificacao -> `outcome = FAILED_VERIFICATION` e `run_status = INCONSISTENT`.

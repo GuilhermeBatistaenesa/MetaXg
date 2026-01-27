@@ -22,8 +22,9 @@ class CustomLogger:
         self.buffer = []
         self._initialized = True
 
-    def configure(self, output_manager: OutputManager, execution_id: str, started_at: datetime):
+    def configure(self, output_manager: OutputManager, execution_id: str, started_at: datetime, log_level: str = "INFO"):
         self.output_manager = output_manager
+        self.log_level = (log_level or "INFO").upper()
         timestamp = started_at.strftime("%Y-%m-%d_%H-%M-%S")
         self.log_filename = f"execution_{timestamp}__{execution_id}.log"
         print(f"[LOGGER] Logs serao salvos em: {self.log_filename}")
@@ -32,6 +33,11 @@ class CustomLogger:
             self._flush_buffer()
 
     def log(self, level, message, details=None):
+        levels = {"DEBUG": 10, "INFO": 20, "WARN": 30, "ERROR": 40}
+        current = levels.get(self.log_level, 20)
+        incoming = levels.get(level.upper(), 20)
+        if incoming < current:
+            return
         entry = {
             "timestamp": datetime.now().isoformat(),
             "level": level.upper(),
