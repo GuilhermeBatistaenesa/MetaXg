@@ -23,6 +23,9 @@ METAX_LOGIN = os.getenv("METAX_LOGIN")
 METAX_PASSWORD = os.getenv("METAX_PASSWORD")
 METAX_URL_LOGIN = os.getenv("METAX_URL_LOGIN", "https://portal.metax.ind.br/SegLogin/")
 
+PUBLIC_BASE_DIR = os.getenv("PUBLIC_BASE_DIR", r"P:\GuilhermeCostaProenca")
+OBJECT_NAME = os.getenv("OBJECT_NAME", "MetaX")
+
 # Paths
 PASTA_FOTOS = os.getenv("PASTA_FOTOS", r"P:\MetaX\fotos_funcionarios")
 LOG_DIR = "logs"
@@ -40,5 +43,7 @@ EMAIL_NOTIFICACAO = os.getenv("EMAIL_NOTIFICACAO", "")
 os.makedirs(LOG_DIR, exist_ok=True)
 os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
-RELATORIOS_DIR = os.path.join(ROOT_DIR, 'relatorios')
+RELATORIOS_DIR = os.path.join(ROOT_DIR, "relatorios")
+JSON_DIR = os.path.join(ROOT_DIR, "json")
 os.makedirs(RELATORIOS_DIR, exist_ok=True)
+os.makedirs(JSON_DIR, exist_ok=True)

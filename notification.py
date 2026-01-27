@@ -1,87 +1,88 @@
-import win32com.client
+﻿import win32com.client
 from datetime import datetime
 from custom_logger import logger
 from config import EMAIL_NOTIFICACAO
 
-def enviar_relatorio_email(stats: dict):
+
+def enviar_relatorio_email(manifest: dict):
     """
-    Envia um relatório de execução por e-mail via Outlook Desktop.
-    
-    Args:
-        stats (dict): Dicionário contendo estatísticas da execução.
-            Ex: {
-                "total": 10,
-                "sucesso": ["João", "Maria"],
-                "falha": [{"nome": "José", "motivo": "Erro X"}],
-                "sem_foto": ["Pedro"],
-                "duplicados": ["Ana"]
-            }
+    Envia um relatorio de execucao por e-mail via Outlook Desktop.
     """
     if not EMAIL_NOTIFICACAO:
-        logger.warn("E-mail de notificação não configurado. Relatório não será enviado.")
+        logger.warn("E-mail de notificacao nao configurado. Relatorio nao sera enviado.")
         return
 
     try:
         logger.info(f"Preparando envio de e-mail para: {EMAIL_NOTIFICACAO}")
-        
+
         outlook = win32com.client.Dispatch("Outlook.Application")
-        mail = outlook.CreateItem(0) # 0 = olMailItem
-        
+        mail = outlook.CreateItem(0)  # 0 = olMailItem
+
+        started_at = datetime.fromisoformat(manifest["started_at"])
+        totals = manifest["totals"]
+
         mail.To = EMAIL_NOTIFICACAO
-        mail.Subject = f"Relatório RPA MetaX - {datetime.now().strftime('%d/%m/%Y %H:%M')}"
-        
-        # Construção do Corpo do Email em HTML
+        mail.Subject = f"Relatorio RPA MetaX - {started_at.strftime('%d/%m/%Y %H:%M')}"
+
         html_body = f"""
         <html>
         <body style="font-family: Arial, sans-serif;">
-            <h2>Relatório de Execução - RPA MetaX</h2>
-            <p><b>Data/Hora:</b> {datetime.now().strftime('%d/%m/%Y %H:%M')}</p>
+            <h2>Relatorio de Execucao - RPA MetaX</h2>
+            <p><b>Data/Hora:</b> {started_at.strftime('%d/%m/%Y %H:%M')}</p>
+            <p><b>Run Status:</b> {manifest['run_status']}</p>
             <hr>
             <h3>Resumo Geral</h3>
             <ul>
-                <li><b>Total Processado:</b> {stats['total']}</li>
-                <li><b>✅ Sucessos:</b> {len(stats['sucesso'])}</li>
-                <li><b>⚠️ Ignorados (Sem Foto):</b> {len(stats['sem_foto'])}</li>
-                <li><b>⚠️ Duplicados (Já Cadastrados):</b> {len(stats['duplicados'])}</li>
-                <li><b>❌ Falhas:</b> {len(stats['falha'])}</li>
+                <li><b>Total Detectado:</b> {totals['detected']}</li>
+                <li><b>Sucessos verificados:</b> {totals['processed_success']}</li>
+                <li><b>Ignorados:</b> {totals['ignored']}</li>
+                <li><b>Falhas:</b> {totals['failed']}</li>
+                <li><b>Sem Foto:</b> {totals['no_photo']}</li>
             </ul>
-            
-            <hr>
-            
-            <h3>Detalhes:</h3>
         """
 
-        if stats['falha']:
-            html_body += "<h4>❌ Falhas:</h4><ul>"
-            for item in stats['falha']:
-                nome = item.get('NOME') or item.get('nome') or "Desconhecido"
-                motivo = item.get('motivo_erro') or item.get('motivo') or "Motivo não especificado"
-                html_body += f"<li><b>{nome}:</b> {motivo}</li>"
-            html_body += "</ul>"
-            
-        if stats['sem_foto']:
-            html_body += "<h4>⚠️ Funcionários sem Foto (Não Cadastrados):</h4><ul>"
-            for nome in stats['sem_foto']:
-                html_body += f"<li>{nome}</li>"
+        if manifest.get("public_write_ok") is False:
+            html_body += "<p><b>ATENCAO:</b> Falha ao escrever na pasta publica.</p>"
+            if manifest.get("public_write_error"):
+                html_body += f"<p><b>Erro:</b> {manifest['public_write_error']}</p>"
+
+        if manifest["run_status"] == "INCONSISTENT":
+            html_body += "<p><b>ATENCAO:</b> Houve inconsistencias entre acao e verificacao.</p>"
+
+        pessoas = manifest["people"]
+        falhas = [p for p in pessoas if p["status"] == "FAILED"]
+        ignorados = [p for p in pessoas if p["status"] == "IGNORED"]
+        sem_foto = [p for p in pessoas if p.get("no_photo")]
+
+        if falhas:
+            html_body += "<h4>Falhas:</h4><ul>"
+            for p in falhas:
+                motivo = p.get("error") or p.get("verification_detail") or "Motivo nao especificado"
+                html_body += f"<li><b>{p['nome']}:</b> {motivo}</li>"
             html_body += "</ul>"
 
-        if stats['duplicados']:
-            html_body += "<h4>⚠️ Funcionários já Cadastrados (Ignorados):</h4><ul>"
-            for nome in stats['duplicados']:
-                html_body += f"<li>{nome}</li>"
+        if sem_foto:
+            html_body += "<h4>Funcionarios sem Foto:</h4><ul>"
+            for p in sem_foto:
+                html_body += f"<li>{p['nome']}</li>"
+            html_body += "</ul>"
+
+        if ignorados:
+            html_body += "<h4>Ignorados (ja cadastrados):</h4><ul>"
+            for p in ignorados:
+                html_body += f"<li>{p['nome']}</li>"
             html_body += "</ul>"
 
         html_body += """
             <br>
-            <p><i>Este é um e-mail automático gerado pelo Robô RPA MetaX.</i></p>
+            <p><i>Este e um e-mail automatico gerado pelo Robo RPA MetaX.</i></p>
         </body>
         </html>
         """
-        
+
         mail.HTMLBody = html_body
-        
         mail.Send()
-        logger.info("E-mail de relatório enviado com sucesso!")
+        logger.info("E-mail de relatorio enviado com sucesso!")
 
     except Exception as e:
         logger.error(f"Falha ao enviar e-mail: {e}", details={"error": str(e)})

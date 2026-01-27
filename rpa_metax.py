@@ -17,9 +17,10 @@ from mappings import (
 
 
 from config import (
-    METAX_LOGIN, METAX_PASSWORD, METAX_URL_LOGIN, 
-    PASTA_FOTOS, SCREENSHOT_DIR
+    METAX_LOGIN, METAX_PASSWORD, METAX_URL_LOGIN,
+    PASTA_FOTOS
 )
+from output_manager import OutputManager
 
 TIMEOUT = 60000 
 TEMPO_CAPTCHA_MS = 30000 
@@ -844,13 +845,11 @@ def preencher_dados_profissionais(page, funcionario: dict) -> bool:
     return True
 
 
-def salvar_cadastro(page, cpf: str) -> bool:
-    """Clica em salvar rascunho e valida o sucesso da operação, tratando modais."""
-    # Nuke modals antes de tentar salvar
+def salvar_cadastro(page, cpf: str, output_manager: OutputManager) -> dict:
+    """Clica em salvar rascunho e retorna o resultado factual do salvamento (sem declarar sucesso final)."""
     fechar_modais_bloqueantes(page)
 
     try:
-        # Tenta remover disabled do botão para forçar o clique mesmo que validação JS esteja bloqueando
         page.evaluate("""
             const btn = document.querySelector('#btnSalvarRascunho');
             if(btn) { 
@@ -858,78 +857,60 @@ def salvar_cadastro(page, cpf: str) -> bool:
                 btn.classList.remove('disabled');
             }
         """)
-        
-        # Espera breve para garantir que JS processou
+
         page.wait_for_timeout(500)
 
         btn_rascunho = page.locator("#btnSalvarRascunho")
-        # Garante scroll para o fim da página
         page.keyboard.press("End")
         page.wait_for_timeout(500)
         btn_rascunho.scroll_into_view_if_needed()
         page.wait_for_timeout(300)
-
-        # Clica em Salvar
         btn_rascunho.click()
 
-        # Loop de verificação (URL mudou OU Modal de Sucesso apareceu)
-        max_retries = 90 # Aumentado para 90 segundos
+        max_retries = 90
         start_time = datetime.now()
         last_click_time = datetime.now()
 
         while (datetime.now() - start_time).seconds < max_retries:
             page.wait_for_timeout(1000)
-            
-            # Retry do click se passar 20s e nada acontecer
+
             if (datetime.now() - last_click_time).seconds > 20:
-                 if btn_rascunho.is_visible():
-                     logger.info("Retentando clique em Salvar (sem resposta há 20s)...")
-                     try:
-                        btn_rascunho.click(force=True)
-                     except:
-                        page.evaluate("document.getElementById('btnSalvarRascunho').click()")
-                 else:
-                     logger.warn("Botão Salvar NÃO está visível durante retry. Verificando erros...")
-                     # Verifica mensagens de erro na tela
-                     erros = page.locator(".text-danger, .field-validation-error").all_inner_texts()
-                     if erros:
-                         erros_texto = " | ".join([e for e in erros if e.strip()])
-                         if erros_texto:
-                             logger.error(f"Erros de validação encontrados na tela: {erros_texto}")
-                             return False # Aborta se tiver erros claros
-
-                 last_click_time = datetime.now()
-
-            # 1. Sucesso por Redirecionamento
-            if "CredenciamentoLista" in page.url:
-                logger.info("RASCUNHO SALVO COM SUCESSO DO REDIRECIONAMENTO")
-                return True
-
-            # 2. Sucesso por Modal (Bootbox)
-            # Verifica se existe algum modal VISÍVEL
-            if page.locator("div.bootbox.modal").filter(has=page.locator(":scope:visible")).count() > 0:
-                
-                # Pega textos de todos os corpos de modal (pode ter ocultos)
-                # Usamos all_inner_texts() para não dar erro de Strict Mode
-                textos_modais = page.locator("div.bootbox-body").all_inner_texts()
-                
-                # Junta tudo numa string só para verificar
-                texto_completo = " | ".join(textos_modais).lower()
-                
-                if "sucesso" in texto_completo:
-                    logger.info("Modal de sucesso detectado!", details={"modais": textos_modais})
-                    
-                    # Tenta clicar no botão OK do modal VISÍVEL
+                if btn_rascunho.is_visible():
+                    logger.info("Retentando clique em Salvar (sem resposta ha 20s)...")
                     try:
-                        # Seletor específico para o botão OK dentro do modal que está visível (.in)
+                        btn_rascunho.click(force=True)
+                    except Exception:
+                        page.evaluate("document.getElementById('btnSalvarRascunho').click()")
+                else:
+                    logger.warn("Botao Salvar NAO esta visivel durante retry. Verificando erros...")
+                    erros = page.locator(".text-danger, .field-validation-error").all_inner_texts()
+                    if erros:
+                        erros_texto = " | ".join([e for e in erros if e.strip()])
+                        if erros_texto:
+                            logger.error(f"Erros de validacao encontrados na tela: {erros_texto}")
+                            return {"attempted": True, "saved": False, "error": "Erros de validacao na tela."}
+
+                last_click_time = datetime.now()
+
+            if "CredenciamentoLista" in page.url:
+                logger.info("Rascunho salvo (confirmacao por redirecionamento).")
+                return {"attempted": True, "saved": True, "error": None}
+
+            if page.locator("div.bootbox.modal").filter(has=page.locator(":scope:visible")).count() > 0:
+                textos_modais = page.locator("div.bootbox-body").all_inner_texts()
+                texto_completo = " | ".join(textos_modais).lower()
+
+                if "sucesso" in texto_completo:
+                    logger.info("Modal de confirmacao detectado.", details={"modais": textos_modais})
+
+                    try:
                         btn_ok = page.locator("div.bootbox.modal.in button[data-bb-handler='ok']")
                         if btn_ok.is_visible():
                             btn_ok.click()
                         else:
-                            # Fallback genérico
                             page.locator("button.bootbox-close-button, button[data-bb-handler='ok']").last.click()
-                            
-                        logger.info("Botão OK do modal clicado.")
+
+                        logger.info("Botao OK do modal clicado.")
                     except Exception as e_click:
                         logger.warn(f"Falha ao clicar no OK: {e_click}. Tentando JS force...", details={"erro": str(e_click)})
                         page.evaluate("""
@@ -937,105 +918,101 @@ def salvar_cadastro(page, cpf: str) -> bool:
                                 if(b.offsetParent !== null) b.click();
                             })
                         """)
-                    
-                    # Espera todos os modais sumirem
+
                     try:
                         page.wait_for_selector("div.bootbox.modal", state="hidden", timeout=3000)
-                    except:
-                        logger.warn("Modal não sumiu via clique. Forçando fechamento via JS.")
+                    except Exception:
+                        logger.warn("Modal nao sumiu via clique. Forcando fechamento via JS.")
                         page.evaluate("""
                             $('.bootbox.modal').modal('hide');
                             $('.modal-backdrop').remove(); 
                         """)
-                    
-                    # SUCESSO CONFIRMADO
-                    logger.info("✅ CADASTRO REALIZADO COM SUCESSO!")
-                    return True
-                else:
-                    # É um modal de erro (ou aviso que não é sucesso)
-                    logger.error(f"Erro ao salvar (Modal): {textos_modais}", details={"modais": textos_modais})
-                    
-                    # Fecha o modal visível para não travar o fluxo
-                    try:
-                         page.locator("div.bootbox.modal.in button").first.click()
-                    except:
-                         page.evaluate("if(document.querySelector('.bootbox.modal.in')) $('.bootbox.modal.in').modal('hide');")
-                         
-                    return False
-        
-        # Se saiu do loop, é timeout
-        logger.error(f"Rascunho NÃO foi salvo (Timeout). URL atual: {page.url}", details={"url": page.url})
 
-        # Logar erros visíveis na tela (divs de alerta padrão)
+                    return {"attempted": True, "saved": True, "error": None}
+                else:
+                    logger.error(f"Erro ao salvar (Modal): {textos_modais}", details={"modais": textos_modais})
+
+                    try:
+                        page.locator("div.bootbox.modal.in button").first.click()
+                    except Exception:
+                        page.evaluate("if(document.querySelector('.bootbox.modal.in')) $('.bootbox.modal.in').modal('hide');")
+
+                    return {"attempted": True, "saved": False, "error": "Erro ao salvar (modal)."}
+
+        logger.error(f"Rascunho NAO foi salvo (Timeout). URL atual: {page.url}", details={"url": page.url})
+
         try:
             alertas = page.locator(".alert, .validation-summary-errors").all_inner_texts()
             if alertas:
                 logger.error(f"Alertas na tela: {alertas}", details={"alertas": alertas})
-        except:
+        except Exception:
             pass
 
-        page.screenshot(path=os.path.join(SCREENSHOT_DIR, f"erro_salvar_{cpf}.png"))
-        return False
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        filename = f"erro_salvar_{cpf}_{timestamp}__{output_manager.execution_id}.png"
+        data = page.screenshot()
+        output_manager.save_screenshot_bytes(filename, data)
+        return {"attempted": True, "saved": False, "error": "Timeout ao salvar rascunho."}
 
     except Exception as e:
         logger.error(f"Falha ao salvar rascunho: {e}", details={"error": str(e)})
-        page.screenshot(path=os.path.join(SCREENSHOT_DIR, f"erro_excecao_salvar_{cpf}.png"))
-        return False
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        filename = f"erro_excecao_salvar_{cpf}_{timestamp}__{output_manager.execution_id}.png"
+        data = page.screenshot()
+        output_manager.save_screenshot_bytes(filename, data)
+        return {"attempted": True, "saved": False, "error": str(e)}
 
 
-def cadastrar_funcionario(page, funcionario: dict, caminho_foto: str = None) -> str:
+def cadastrar_funcionario(page, funcionario: dict, output_manager: OutputManager, caminho_foto: str = None) -> dict:
     """
-    Função principal que orquestra todo o cadastro de um funcionário.
-    
-    Args:
-        page: Página Playwright logada.
-        funcionario (dict): Dicionário com dados do funcionário.
-        caminho_foto (str, optional): Caminho pré-baixado da foto.
-        
+    Funcao principal que orquestra todo o cadastro de um funcionario.
+
     Returns:
-        str: 'SUCESSO', 'ERRO', 'DUPLICADO', 'SEM_FOTO'
+        dict: {"attempted": bool, "saved": bool, "error": str|None, "no_photo": bool}
     """
     nome = funcionario["NOME"]
     cpf = funcionario["CPF"]
     obra = funcionario.get("NUMERO_OBRA", "")
-    
+
     logger.info(f"Cadastrando {nome} | CPF {cpf}", details={"nome": nome, "cpf": cpf, "obra": obra})
-    
-    # Navegação simples (verificação de duplicidade já feita no main)
+
+    # Navegacao simples (verificacao de duplicidade ja feita no main)
     navegar_para_cadastro(page)
 
-    # FOTO
-    caminho_final = caminho_foto 
+    caminho_final = caminho_foto
     if not caminho_final:
         caminho_final = buscar_foto_por_cpf(PASTA_FOTOS, cpf)
 
+    no_photo = False
     if caminho_final:
         anexar_foto(page, caminho_final)
     else:
-        logger.info(f"Nenhuma foto encontrada para CPF {cpf} – seguindo sem foto", details={"cpf": cpf})
-        # Decisão de negócio: Se não tem foto, segue ou para?
-        # O usuário pediu para relatar "quantos não acharam a foto".
-        # O script original continuava.
-        # Vou assumir que CONTINUA, mas reporta "sem foto" separadamente?
-        # Ou se a foto for obrigatória, retorna ERRO.
-        # No script original, ele continuava em anexar_foto. 
-        pass
+        no_photo = True
+        logger.info(f"Nenhuma foto encontrada para CPF {cpf} - seguindo sem foto", details={"cpf": cpf})
 
     preencher_dados_pessoais(page, funcionario)
     preencher_documentos(page, funcionario)
     preencher_endereco(page, funcionario)
-    
+
     sucesso_cargo = preencher_dados_profissionais(page, funcionario)
     if not sucesso_cargo:
-        return 'ERRO'
+        return {"attempted": True, "saved": False, "error": "Cargo nao encontrado no MetaX.", "no_photo": no_photo}
 
-    sucesso_salvar = salvar_cadastro(page, cpf)
-    if not sucesso_salvar:
-        return 'ERRO'
-    
-    # Se salvou com sucesso, mas não tinha foto, podemos retornar um status especial ou apenas SUCESSO?
-    # O usuário quer saber "quantos não acharam a foto".
-    # Podemos retornar SUCESSO_SEM_FOTO se quiser ser preciso, mas vamos manter simples.
-    # O chamador pode verificar se caminho_final era None.
-    
-    return 'SUCESSO'
+    resultado_salvar = salvar_cadastro(page, cpf, output_manager)
+    if not resultado_salvar.get("saved"):
+        return {
+            "attempted": True,
+            "saved": False,
+            "error": resultado_salvar.get("error") or "Falha ao salvar rascunho.",
+            "no_photo": no_photo,
+        }
+
+    return {"attempted": True, "saved": True, "error": None, "no_photo": no_photo}
+
+
+def verificar_cadastro(page, funcionario: dict) -> tuple[bool, str]:
+    """
+    Placeholder de verificacao pos-acao.
+    Substitua este metodo com a checagem real (RM/SharePoint/API).
+    """
+    return False, "Verificacao nao implementada. Plugue aqui a checagem real."

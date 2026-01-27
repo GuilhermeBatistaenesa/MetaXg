@@ -1,29 +1,31 @@
-from rpa_metax import iniciar_sessao, cadastrar_funcionario, obter_todos_rascunhos
-from sharepoint import baixar_fotos_em_lote
-import pyodbc
+import uuid
 from datetime import datetime
+
+import pyodbc
 from custom_logger import logger
+from output_manager import OutputManager, KIND_JSON
+from rpa_metax import iniciar_sessao, cadastrar_funcionario, obter_todos_rascunhos, verificar_cadastro
+from sharepoint import baixar_fotos_em_lote
 
 from config import (
-    DB_DRIVER, DB_SERVER, DB_NAME, DB_USER, DB_PASSWORD, PASTA_FOTOS, DIAS_RETROATIVOS
+    DB_DRIVER, DB_SERVER, DB_NAME, DB_USER, DB_PASSWORD, PASTA_FOTOS, DIAS_RETROATIVOS,
+    ROOT_DIR, PUBLIC_BASE_DIR, OBJECT_NAME
 )
 
+
 def obter_conexao() -> pyodbc.Connection:
-    """Estabelece conexão com o banco de dados SQL Server."""
-    # Lista de drivers ODBC para SQL Server (em ordem de preferência)
+    """Estabelece conexao com o banco de dados SQL Server."""
     drivers_alternativos = [
-        DB_DRIVER,  # Tenta primeiro o driver configurado
+        DB_DRIVER,
         "ODBC Driver 17 for SQL Server",
         "ODBC Driver 18 for SQL Server",
         "ODBC Driver 13 for SQL Server",
-        "SQL Server",  # Driver mais antigo, geralmente disponível
+        "SQL Server",
         "SQL Server Native Client 11.0",
     ]
-    
-    # Obtém lista de drivers disponíveis no sistema
+
     drivers_disponiveis = [d for d in pyodbc.drivers()]
-    
-    # Tenta cada driver até encontrar um que funcione
+
     ultimo_erro = None
     for driver in drivers_alternativos:
         if driver in drivers_disponiveis:
@@ -36,65 +38,60 @@ def obter_conexao() -> pyodbc.Connection:
                     f"UID={DB_USER};"
                     f"PWD={DB_PASSWORD}"
                 )
-                logger.info(f"Conexão estabelecida com sucesso usando driver: {driver}", details={"driver": driver})
+                logger.info(f"Conexao estabelecida com sucesso usando driver: {driver}", details={"driver": driver})
                 return conexao
             except Exception as e:
                 ultimo_erro = e
                 logger.warn(f"Falha ao conectar com driver {driver}: {e}", details={"driver": driver, "erro": str(e)})
                 continue
-    
-    # Se nenhum driver funcionou, levanta o último erro
+
     if ultimo_erro:
-        raise ConnectionError(f"Não foi possível conectar ao banco de dados. Último erro: {ultimo_erro}")
-    else:
-        raise ConnectionError(
-            f"Nenhum driver ODBC para SQL Server encontrado. "
-            f"Drivers disponíveis: {', '.join(drivers_disponiveis)}. "
-            f"Por favor, instale um driver ODBC para SQL Server."
-        )
+        raise ConnectionError(f"Nao foi possivel conectar ao banco de dados. Ultimo erro: {ultimo_erro}")
+
+    raise ConnectionError(
+        f"Nenhum driver ODBC para SQL Server encontrado. "
+        f"Drivers disponiveis: {', '.join(drivers_disponiveis)}. "
+        f"Por favor, instale um driver ODBC para SQL Server."
+    )
+
 
 def buscar_funcionarios_para_cadastro(data_admissao: str = None, filtro_nomes: list[str] = None) -> list[dict]:
     """
-    Busca funcionários.
+    Busca funcionarios.
     - Se filtro_nomes for fornecido, busca APENAS esses nomes (ignora data).
-    - Se não, busca por data de admissão (e dias retroativos).
-    
-    Args:
-        data_admissao (str, optional): Data final de admissão no formato YYYY-MM-DD.
-        filtro_nomes (list[str], optional): Lista de nomes para buscar especificamente.
-        
-    Returns:
-        list[dict]: Lista de dicionários com os dados dos funcionários.
+    - Se nao, busca por data de admissao (e dias retroativos).
     """
     if not data_admissao:
         data_admissao = datetime.now().strftime("%Y-%m-%d")
 
-    # Condição WHERE dinâmica
     if filtro_nomes and len(filtro_nomes) > 0:
-        logger.info(f"MODO FILTRO ATIVADO: Buscando {len(filtro_nomes)} funcionário(s) específico(s). Datas serão ignoradas.", details={"nomes": filtro_nomes})
-        
-        # Formata lista para SQL: 'NOME1', 'NOME2'
+        logger.info(
+            f"MODO FILTRO ATIVADO: Buscando {len(filtro_nomes)} funcionario(s) especifico(s). Datas serao ignoradas.",
+            details={"nomes": filtro_nomes},
+        )
         lista_sql = ", ".join([f"'{nome.strip().upper()}'" for nome in filtro_nomes])
         where_clause = f"P.NOME IN ({lista_sql})"
-        
-        # Declara variaveis de data apenas para nao quebrar o script, mas nao serao usadas no filtro principal
         datas_vars = f"""
             DECLARE @DataFim DATE = '{data_admissao}';
             DECLARE @DataInicio DATE = DATEADD(DAY, -{DIAS_RETROATIVOS}, @DataFim);
         """
     else:
-        # Modo Padrão (Por Data)
         if DIAS_RETROATIVOS > 0:
-            logger.info(f"Buscando funcionários com admissão entre {data_admissao} e {DIAS_RETROATIVOS} dia(s) antes.", details={"data_ref": data_admissao, "retroativos": DIAS_RETROATIVOS})
+            logger.info(
+                f"Buscando funcionarios com admissao entre {data_admissao} e {DIAS_RETROATIVOS} dia(s) antes.",
+                details={"data_ref": data_admissao, "retroativos": DIAS_RETROATIVOS},
+            )
         else:
-            logger.info(f"Buscando funcionários com admissão em: {data_admissao}", details={"data_admissao": data_admissao})
-            
+            logger.info(
+                f"Buscando funcionarios com admissao em: {data_admissao}",
+                details={"data_admissao": data_admissao},
+            )
+
         datas_vars = f"""
             DECLARE @DataFim DATE = '{data_admissao}';
             DECLARE @DataInicio DATE = DATEADD(DAY, -{DIAS_RETROATIVOS}, @DataFim);
         """
         where_clause = "CAST(F.DATAADMISSAO AS DATE) BETWEEN @DataInicio AND @DataFim"
-
 
     sql = f"""
         {datas_vars}
@@ -257,125 +254,188 @@ def buscar_funcionarios_para_cadastro(data_admissao: str = None, filtro_nomes: l
         colunas = [c[0] for c in cursor.description]
         return [dict(zip(colunas, row)) for row in cursor.fetchall()]
 
+
 from notification import enviar_relatorio_email
 from reporting import gerar_relatorio_txt
 
+
 def main():
-    logger.info("===== INÍCIO PROCESSO SHAREPOINT + METAX =====")
+    execution_id = str(uuid.uuid4())
+    started_at = datetime.now()
+    output_manager = OutputManager(
+        execution_id=execution_id,
+        object_name=OBJECT_NAME,
+        public_base_dir=PUBLIC_BASE_DIR,
+        local_root=ROOT_DIR,
+        started_at=started_at,
+    )
+    logger.configure(output_manager, execution_id, started_at)
 
-    # LISTA DE FUNCIONÁRIOS PONTUAIS (Deixe vazia [] ou None para rodar normal por data)
-    funcionarios_pontuais = [
-        "ALEXSANDRO DE ALMEIDA CARDOSO",
-        "ALEX DA SILVA ALEIXO",
-        "PAULO GARCIAS PIMENTA LOPES",
-        "RONIERE ASSUNCAO",
-        "JOSE JUNIOR DA SILVA LIMA",
-        "TAYRON HENRIKE DOS SANTOS AMORIM",
-        "WANDECARLOS DE ASSUNCAO OLIVEIRA"
-    ]
-    # funcionarios_pontuais = None
+    logger.info("===== INICIO PROCESSO SHAREPOINT + METAX =====")
 
-    # Se pontuais for None, busca por data (padrão)
-    funcionarios = buscar_funcionarios_para_cadastro(filtro_nomes=funcionarios_pontuais)
-
-    if not funcionarios:
-        logger.info("Nenhum funcionário encontrado para processar.")
-        return
-
-    logger.info(f"Funcionários a processar: {len(funcionarios)}", details={"total": len(funcionarios)})
-
-    # Estatísticas
-    stats = {
-        "total": len(funcionarios),
-        "sucesso": [],
-        "falha": [],
-        "sem_foto": [],
-        "duplicados": []
+    manifest = {
+        "execution_id": execution_id,
+        "object_name": OBJECT_NAME,
+        "started_at": started_at.isoformat(),
+        "finished_at": None,
+        "run_status": "OK",
+        "public_write_ok": None,
+        "public_write_error": None,
+        "totals": {
+            "detected": 0,
+            "processed_success": 0,
+            "ignored": 0,
+            "failed": 0,
+            "no_photo": 0,
+        },
+        "people": [],
     }
 
-    fotos = baixar_fotos_em_lote(
-        funcionarios=funcionarios,
-        pasta_destino=PASTA_FOTOS
-    )
-
-    p, browser, page = iniciar_sessao()
+    inconsistente = False
+    funcionarios = []
+    p = None
+    browser = None
+    page = None
 
     try:
-        # 1. Obter lista de rascunhos JÁ EXISTENTES de uma vez só
+        funcionarios_pontuais = [
+            "ALEXSANDRO DE ALMEIDA CARDOSO",
+            "ALEX DA SILVA ALEIXO",
+            "PAULO GARCIAS PIMENTA LOPES",
+            "RONIERE ASSUNCAO",
+            "JOSE JUNIOR DA SILVA LIMA",
+            "TAYRON HENRIKE DOS SANTOS AMORIM",
+            "WANDECARLOS DE ASSUNCAO OLIVEIRA",
+        ]
+        # funcionarios_pontuais = None
+
+        funcionarios = buscar_funcionarios_para_cadastro(filtro_nomes=funcionarios_pontuais)
+
+        if not funcionarios:
+            logger.info("Nenhum funcionario encontrado para processar.")
+            return
+
+        logger.info(f"Funcionarios a processar: {len(funcionarios)}", details={"total": len(funcionarios)})
+
+        fotos = baixar_fotos_em_lote(
+            funcionarios=funcionarios,
+            pasta_destino=PASTA_FOTOS,
+        )
+
+        p, browser, page = iniciar_sessao()
+
         rascunhos_existentes = obter_todos_rascunhos(page)
-        
+
         for func in funcionarios:
             cpf = func["CPF"]
-            cpf_limpo = ''.join(filter(str.isdigit, str(cpf)))
+            cpf_limpo = "".join(filter(str.isdigit, str(cpf)))
             nome = func["NOME"]
-            
-            # 2. Verifica se JÁ ESTÁ na lista de rascunhos (Cache Local)
+
+            registro = {
+                "nome": nome,
+                "cpf": cpf_limpo,
+                "status": "FAILED",
+                "verified": False,
+                "verification_detail": "",
+                "action_result": {},
+                "error": "",
+                "no_photo": False,
+            }
+
             if cpf_limpo in rascunhos_existentes:
-                logger.info(f"Funcionário {nome} já consta nos rascunhos (CACHE). Pulando...", details={"cpf": cpf})
-                stats["duplicados"].append(nome)
+                logger.info(f"Funcionario {nome} ja consta nos rascunhos (CACHE). Pulando...", details={"cpf": cpf})
+                registro["status"] = "IGNORED"
+                registro["verification_detail"] = "Ignorado: rascunho ja existente (cache)."
+                manifest["people"].append(registro)
                 continue
 
-            # Se não está cadastrado, segue o fluxo
             caminho_foto = fotos.get(cpf)
-
             if caminho_foto:
                 logger.info(f"Foto pronta para {nome}", details={"cpf": cpf, "foto": caminho_foto})
             else:
-                logger.warn(f"Foto não encontrada para {nome}", details={"cpf": cpf})
-                stats["sem_foto"].append(nome) # Adiciona à lista de sem foto
+                logger.warn(f"Foto nao encontrada para {nome}", details={"cpf": cpf})
+                registro["no_photo"] = True
 
             logger.info(f"Iniciando cadastro de {nome} ({cpf})", details={"funcionario": nome, "cpf": cpf})
-            
+
             try:
-                # Agora retorna STATUS (str)
-                # IMPORTANTE: navegar_para_cadastro não verifica mais duplicidade interna
-                status = cadastrar_funcionario(page, func, caminho_foto)
-                
-                if status == 'SUCESSO':
-                    stats["sucesso"].append(nome)
-                    # Atualiza o cache de rascunhos após salvar com sucesso
-                    rascunhos_existentes.add(cpf_limpo)
-                    logger.info(f"Cache de rascunhos atualizado. CPF {cpf_limpo} adicionado ao cache.", details={"cpf": cpf_limpo})
-                elif status == 'DUPLICADO': 
-                    # Fallback caso a verificação em cache falhe e a função interna detecte (se mantivermos lógica lá)
-                    # Mas como removemos a varredura interna, isso só aconteceria se o cadastro falhasse por duplicidade no save
-                    stats["duplicados"].append(nome)
-                else: # ERRO
-                    # Salva o objeto COMPLETO para permitir o retry
-                    func_copia = func.copy()
-                    func_copia["motivo_erro"] = "Erro no processo de cadastro (Status inconclusivo)"
-                    stats["falha"].append(func_copia)
-
-
+                action = cadastrar_funcionario(page, func, output_manager, caminho_foto)
             except Exception as e:
                 logger.error(f"Falha ao cadastrar {nome}: {e}", details={"cpf": cpf, "erro": str(e)})
-                # Salva o objeto COMPLETO para retry
-                func_copia = func.copy()
-                func_copia["motivo_erro"] = str(e)
-                stats["falha"].append(func_copia)
-                
-                # Tenta recuperar navegação
+                registro["status"] = "FAILED"
+                registro["error"] = str(e)
+                registro["action_result"] = {"attempted": False, "saved": False, "error": str(e)}
+
                 try:
-                   page.goto("https://portal.metax.ind.br/", timeout=5000)
-                except:
+                    page.goto("https://portal.metax.ind.br/", timeout=5000)
+                except Exception:
                     pass
 
-        # Retry logic removed as per user request (single attempt only)
-            
+                manifest["people"].append(registro)
+                continue
+
+            registro["action_result"] = action
+            if action.get("no_photo"):
+                registro["no_photo"] = True
+
+            if action.get("saved"):
+                try:
+                    verificado, detalhe = verificar_cadastro(page, func)
+                except Exception as e:
+                    verificado = False
+                    detalhe = f"Erro na verificacao: {e}"
+
+                registro["verified"] = bool(verificado)
+                registro["verification_detail"] = detalhe or ""
+
+                if verificado:
+                    registro["status"] = "SUCCESS"
+                    rascunhos_existentes.add(cpf_limpo)
+                    logger.info("Cache de rascunhos atualizado.", details={"cpf": cpf_limpo})
+                else:
+                    registro["status"] = "FAILED"
+                    registro["error"] = "Cadastro nao verificado."
+                    inconsistente = True
+            else:
+                registro["status"] = "FAILED"
+                registro["verification_detail"] = "Salvamento nao confirmado."
+                registro["error"] = action.get("error") or "Falha ao salvar rascunho."
+
+            manifest["people"].append(registro)
+
     finally:
-        logger.info("Fechando navegador...")
-        browser.close()
-        p.stop()
-        
-        logger.info("Gerando relatórios...")
-        gerar_relatorio_txt(stats)
-        enviar_relatorio_email(stats)
+        if browser:
+            logger.info("Fechando navegador...")
+            browser.close()
+        if p:
+            p.stop()
+
+        finished_at = datetime.now()
+        manifest["finished_at"] = finished_at.isoformat()
+
+        totals = {
+            "detected": len(funcionarios),
+            "processed_success": len([p for p in manifest["people"] if p["status"] == "SUCCESS" and p["verified"]]),
+            "ignored": len([p for p in manifest["people"] if p["status"] == "IGNORED"]),
+            "failed": len([p for p in manifest["people"] if p["status"] == "FAILED"]),
+            "no_photo": len([p for p in manifest["people"] if p.get("no_photo")]),
+        }
+        manifest["totals"] = totals
+
+        if inconsistente:
+            manifest["run_status"] = "INCONSISTENT"
+
+        manifest["public_write_ok"] = output_manager.public_write_ok
+        manifest["public_write_error"] = output_manager.public_write_error
+
+        data_str = started_at.strftime("%Y-%m-%d_%H-%M-%S")
+        manifest_filename = f"manifest_{data_str}__{execution_id}.json"
+        output_manager.write_json(KIND_JSON, manifest_filename, manifest)
+
+        logger.info("Gerando relatorios...")
+        gerar_relatorio_txt(manifest, output_manager)
+        enviar_relatorio_email(manifest)
         logger.info("===== FIM PROCESSO =====")
-        
-    
-
-
-
 
 
 if __name__ == "__main__":
