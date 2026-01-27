@@ -24,11 +24,15 @@ Este documento descreve como executar em modo dev e como gerar/rodar executávei
    ```
 
 ## 2) Modo executável (PyInstaller)
-1. Gere os executáveis:
+1. Instale o PyInstaller (se necessário):
+   ```powershell
+   pip install pyinstaller
+   ```
+2. Gere os executáveis:
    ```powershell
    pyinstaller build\metaxg.spec --clean
    ```
-2. Executáveis gerados em:
+3. Executáveis gerados em:
    ```
    dist\MetaXg.exe
    dist\MetaXg_debug.exe
@@ -52,7 +56,7 @@ Este documento descreve como executar em modo dev e como gerar/rodar executávei
 
 Exemplo (modo TXT + sem email):
 ```powershell
-.\dist\MetaXg.exe --txt .\inputs\cadastrar_metax.txt --no-email
+.\dist\MetaXg.exe --txt P:\\GuilhermeCostaProenca\\04_AUTOMACOES\\MetaXg\\inputs\\cadastrar_metax.txt --no-email
 ```
 
 ## 4) Artefatos gerados (evidências)
@@ -66,10 +70,11 @@ Em falha de verificação, são criados:
 - `logs/screenshots/verify_fail_<cpf>_<timestamp>__<execid>.png`
 - `json/verify_debug_<cpf>_<timestamp>__<execid>.json`
 
-## 5) Modo TXT (lista manual)
-- Arquivo esperado: `inputs/cadastrar_metax.txt`
+## 5) Modo TXT (fila automática)
+- Arquivo padrão: `P:\\GuilhermeCostaProenca\\04_AUTOMACOES\\MetaXg\\inputs\\cadastrar_metax.txt`
 - Formato: um nome por linha; ignora vazios e comentários `#`
-- Se o arquivo não existir ou estiver vazio, o SQL padrão é usado.
+- O TXT funciona como fila: nomes processados (attempted=True) ou ignorados por cache são removidos.
+- Se ficar vazio, o arquivo é apagado.
 
 ## 6) Manifest e interpretação
 O manifest (`json/manifest_*.json`) é a fonte da verdade.
@@ -86,4 +91,10 @@ Regra: SUCCESS somente quando `verified=true`.
 Se o navegador não abrir, instale:
 ```powershell
 python -m playwright install chromium
+```
+
+Se estiver em outra máquina sem Python, copie a pasta de browsers do Playwright
+(geralmente em %LOCALAPPDATA%\ms-playwright) e defina:
+```powershell
+$env:PLAYWRIGHT_BROWSERS_PATH="C:\\caminho\\para\\ms-playwright"
 ```

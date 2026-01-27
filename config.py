@@ -32,6 +32,7 @@ METAX_URL_LOGIN = os.getenv("METAX_URL_LOGIN", "https://portal.metax.ind.br/SegL
 
 PUBLIC_BASE_DIR = os.getenv("PUBLIC_BASE_DIR", r"P:\GuilhermeCostaProenca")
 OBJECT_NAME = os.getenv("OBJECT_NAME", "MetaX")
+PUBLIC_INPUTS_DIR = os.path.join(PUBLIC_BASE_DIR, "04_AUTOMACOES", "MetaXg", "inputs")
 
 # Paths
 PASTA_FOTOS = os.getenv("PASTA_FOTOS", r"P:\MetaX\fotos_funcionarios")
@@ -54,3 +55,4 @@ RELATORIOS_DIR = os.path.join(ROOT_DIR, "relatorios")
 JSON_DIR = os.path.join(ROOT_DIR, "json")
 os.makedirs(RELATORIOS_DIR, exist_ok=True)
 os.makedirs(JSON_DIR, exist_ok=True)
+os.makedirs(PUBLIC_INPUTS_DIR, exist_ok=True)

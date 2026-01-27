@@ -12,7 +12,7 @@ from sharepoint import baixar_fotos_em_lote
 
 from config import (
     DB_DRIVER, DB_SERVER, DB_NAME, DB_USER, DB_PASSWORD, PASTA_FOTOS, DIAS_RETROATIVOS,
-    ROOT_DIR, PUBLIC_BASE_DIR, OBJECT_NAME
+    ROOT_DIR, PUBLIC_BASE_DIR, PUBLIC_INPUTS_DIR, OBJECT_NAME
 )
 
 
@@ -297,11 +297,95 @@ def carregar_lista_nomes_txt(path: str) -> list[str]:
     return nomes
 
 
+def _adquirir_lock(lock_path: str) -> bool:
+    try:
+        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.close(fd)
+        return True
+    except FileExistsError:
+        return False
+
+
+def _liberar_lock(lock_path: str):
+    try:
+        if os.path.exists(lock_path):
+            os.remove(lock_path)
+    except Exception:
+        pass
+
+
+def _carregar_txt_com_linhas(path: str):
+    if not os.path.exists(path):
+        return [], []
+    with open(path, "r", encoding="utf-8") as f:
+        linhas = f.readlines()
+    nomes = []
+    vistos = set()
+    for linha in linhas:
+        raw = linha.strip()
+        if not raw or raw.startswith("#"):
+            continue
+        nome = _normalizar_nome(raw)
+        if not nome or nome in vistos:
+            continue
+        vistos.add(nome)
+        nomes.append(nome)
+    return linhas, nomes
+
+
+def _atualizar_fila_txt(path: str, nomes_processados: set[str]) -> int:
+    if not os.path.exists(path):
+        return 0
+    with open(path, "r", encoding="utf-8") as f:
+        linhas = f.readlines()
+
+    novas_linhas = []
+    removidos = 0
+    for linha in linhas:
+        raw = linha.strip()
+        if not raw or raw.startswith("#"):
+            novas_linhas.append(linha)
+            continue
+        nome = _normalizar_nome(raw)
+        if nome in nomes_processados:
+            removidos += 1
+            continue
+        novas_linhas.append(linha)
+
+    nomes_restantes = [l for l in novas_linhas if l.strip() and not l.strip().startswith("#")]
+    if not nomes_restantes:
+        os.remove(path)
+        return removidos
+
+    with open(path, "w", encoding="utf-8") as f:
+        f.writelines(novas_linhas)
+    return removidos
+
+
+def _escrever_documento_operacional_publico():
+    os.makedirs(os.path.dirname(PUBLIC_INPUTS_DIR), exist_ok=True)
+    path = os.path.join(PUBLIC_BASE_DIR, "04_AUTOMACOES", "MetaXg", "COMO_USAR_METAX.txt")
+    conteudo = (
+        "OPERACAO METAXG (RAPIDO)\\n"
+        "1) Coloque o TXT em: P:\\\\GuilhermeCostaProenca\\\\04_AUTOMACOES\\\\MetaXg\\\\inputs\\\\cadastrar_metax.txt\\n"
+        "2) Rode o robo normalmente (Python ou EXE).\\n"
+        "3) Resolva o CAPTCHA quando solicitado.\\n"
+        "4) Confira o relatorio em relatorios/ e o email (se habilitado).\\n"
+        "5) O TXT se auto-limpa: nomes processados sao removidos.\\n"
+        "6) Evidencias de falha de verificacao:\\n"
+        "   - logs/screenshots/verify_fail_<cpf>_...png\\n"
+        "   - json/verify_debug_<cpf>_...json\\n"
+    )
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(conteudo)
+
+
 def _ensure_output_dirs():
     os.makedirs(os.path.join(ROOT_DIR, "logs"), exist_ok=True)
     os.makedirs(os.path.join(ROOT_DIR, "logs", "screenshots"), exist_ok=True)
     os.makedirs(os.path.join(ROOT_DIR, "relatorios"), exist_ok=True)
     os.makedirs(os.path.join(ROOT_DIR, "json"), exist_ok=True)
+    os.makedirs(PUBLIC_INPUTS_DIR, exist_ok=True)
 
 
 def _parse_args():
@@ -327,6 +411,7 @@ def main():
     )
     logger.configure(output_manager, execution_id, started_at, log_level=args.log_level)
     _ensure_output_dirs()
+    _escrever_documento_operacional_publico()
 
     logger.info("===== INICIO PROCESSO SHAREPOINT + METAX =====")
 
@@ -357,8 +442,14 @@ def main():
     page = None
 
     try:
-        txt_path = args.txt_path or os.path.join(ROOT_DIR, "inputs", "cadastrar_metax.txt")
-        nomes_txt = carregar_lista_nomes_txt(txt_path)
+        txt_path = args.txt_path or os.path.join(PUBLIC_INPUTS_DIR, "cadastrar_metax.txt")
+        lock_path = f"{txt_path}.lock"
+        lock_ok = _adquirir_lock(lock_path)
+        if not lock_ok and os.path.exists(txt_path):
+            logger.warn("Arquivo TXT em uso (lock ativo). Rodando em modo normal sem TXT.")
+            nomes_txt = []
+        else:
+            _, nomes_txt = _carregar_txt_com_linhas(txt_path)
 
         if nomes_txt:
             logger.info("Modo TXT ativo: filtrando SQL por lista manual.")
@@ -381,6 +472,7 @@ def main():
         p, browser, page = iniciar_sessao(headless=args.headless)
 
         rascunhos_existentes = obter_todos_rascunhos(page)
+        nomes_processados_no_run = set()
 
         for func in funcionarios:
             cpf = func["CPF"]
@@ -414,6 +506,7 @@ def main():
                 registro["status_final"] = "FAILED"
                 registro["outcome"] = "FAILED_ACTION"
                 registro["errors"]["action_error"] = "Ignorado: rascunho ja existente (cache)."
+                nomes_processados_no_run.add(_normalizar_nome(nome))
                 manifest["people"].append(registro)
                 continue
 
@@ -459,6 +552,8 @@ def main():
             registro["action_saved"] = action["saved"]
             if action.get("no_photo"):
                 registro["no_photo"] = True
+            if registro["attempted"]:
+                nomes_processados_no_run.add(_normalizar_nome(nome))
 
             if registro["action_saved"]:
                 registro["timestamps"]["saved_at"] = datetime.now().isoformat()
@@ -493,6 +588,14 @@ def main():
             manifest["people"].append(registro)
 
     finally:
+        try:
+            if "lock_ok" in locals() and lock_ok and os.path.exists(txt_path):
+                removidos = _atualizar_fila_txt(txt_path, nomes_processados_no_run)
+                logger.info(f"TXT fila atualizado. Nomes removidos: {removidos}")
+        finally:
+            if "lock_ok" in locals() and lock_ok:
+                _liberar_lock(lock_path)
+
         if browser:
             logger.info("Fechando navegador...")
             browser.close()
