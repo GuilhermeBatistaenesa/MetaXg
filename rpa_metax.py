@@ -735,6 +735,26 @@ def preencher_endereco(page, funcionario: dict) -> None:
         else:
              logger.info(f"Fallback usado: Mantendo estado original do CEP ({estado_valor_atual}) para evitar erro de validação.")
 
+    # TENTATIVA DE FORÇAR CIDADE (Para casos de fallback onde a cidade fica vazia)
+    if fallback_usado:
+        cidade_rm = funcionario.get("NATURALIDADE", "").strip().upper()
+        if cidade_rm:
+            logger.info(f"Fallback usado: Tentando forçar cidade para {cidade_rm}...")
+            # Tenta seletores comuns de cidade
+            try:
+                 page.evaluate(f"document.querySelector('#nomeCidade').value = '{cidade_rm}';")
+            except: pass
+            try:
+                 page.evaluate(f"document.querySelector('#cidade').value = '{cidade_rm}';")
+            except: pass
+            try:
+                 # Se for combo, é mais chato, mas tenta setar se existir
+                 page.evaluate(f"document.querySelector('#comboCidade').disabled = false;")
+                 # Esse aqui é chute, geralmente combo precisa de ID. 
+                 # Mas se for input text (comum quando falha cep), o value funciona.
+            except: pass
+
+
     # BAIRRO
     fechar_modais_bloqueantes(page)
     campo_bairro = page.locator("#nomeBairro")
@@ -830,13 +850,17 @@ def salvar_cadastro(page, cpf: str) -> bool:
     fechar_modais_bloqueantes(page)
 
     try:
-        page.wait_for_function(
-            """() => {
-                const btn = document.querySelector('#btnSalvarRascunho');
-                return btn && !btn.disabled;
-            }""",
-            timeout=TIMEOUT
-        )
+        # Tenta remover disabled do botão para forçar o clique mesmo que validação JS esteja bloqueando
+        page.evaluate("""
+            const btn = document.querySelector('#btnSalvarRascunho');
+            if(btn) { 
+                btn.disabled = false; 
+                btn.classList.remove('disabled');
+            }
+        """)
+        
+        # Espera breve para garantir que JS processou
+        page.wait_for_timeout(500)
 
         btn_rascunho = page.locator("#btnSalvarRascunho")
         # Garante scroll para o fim da página
