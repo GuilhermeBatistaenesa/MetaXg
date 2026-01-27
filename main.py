@@ -299,6 +299,13 @@ def carregar_lista_nomes_txt(path: str) -> list[str]:
 
 def _adquirir_lock(lock_path: str) -> bool:
     try:
+        if os.path.exists(lock_path):
+            age = datetime.now().timestamp() - os.path.getmtime(lock_path)
+            if age > 30 * 60:
+                os.remove(lock_path)
+    except Exception:
+        pass
+    try:
         fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         os.close(fd)
         return True
@@ -385,7 +392,6 @@ def _ensure_output_dirs():
     os.makedirs(os.path.join(ROOT_DIR, "logs", "screenshots"), exist_ok=True)
     os.makedirs(os.path.join(ROOT_DIR, "relatorios"), exist_ok=True)
     os.makedirs(os.path.join(ROOT_DIR, "json"), exist_ok=True)
-    os.makedirs(PUBLIC_INPUTS_DIR, exist_ok=True)
 
 
 def _parse_args():
@@ -444,12 +450,16 @@ def main():
     try:
         txt_path = args.txt_path or os.path.join(PUBLIC_INPUTS_DIR, "cadastrar_metax.txt")
         lock_path = f"{txt_path}.lock"
-        lock_ok = _adquirir_lock(lock_path)
-        if not lock_ok and os.path.exists(txt_path):
-            logger.warn("Arquivo TXT em uso (lock ativo). Rodando em modo normal sem TXT.")
-            nomes_txt = []
+        if os.path.exists(txt_path):
+            lock_ok = _adquirir_lock(lock_path)
+            if not lock_ok:
+                logger.warn("Arquivo TXT em uso (lock ativo). Rodando em modo normal (SQL).")
+                nomes_txt = []
+            else:
+                _, nomes_txt = _carregar_txt_com_linhas(txt_path)
         else:
-            _, nomes_txt = _carregar_txt_com_linhas(txt_path)
+            logger.info("TXT público não encontrado; rodando modo normal (SQL).")
+            nomes_txt = []
 
         if nomes_txt:
             logger.info("Modo TXT ativo: filtrando SQL por lista manual.")
