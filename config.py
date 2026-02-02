@@ -30,8 +30,9 @@ METAX_LOGIN = os.getenv("METAX_LOGIN")
 METAX_PASSWORD = os.getenv("METAX_PASSWORD")
 METAX_URL_LOGIN = os.getenv("METAX_URL_LOGIN", "https://portal.metax.ind.br/SegLogin/")
 
-PUBLIC_BASE_DIR = os.getenv("PUBLIC_BASE_DIR", r"P:\GuilhermeCostaProenca")
-OBJECT_NAME = os.getenv("OBJECT_NAME", "MetaX")
+PUBLIC_BASE_DIR = os.getenv("PUBLIC_BASE_DIR", r"P:\ProcessoMetaX")
+OBJECT_NAME = os.getenv("OBJECT_NAME", "MetaXg")
+PUBLIC_INPUTS_DIR = os.getenv("PUBLIC_INPUTS_DIR", os.path.join(PUBLIC_BASE_DIR, "em processamento"))
 
 # Paths
 PASTA_FOTOS = os.getenv("PASTA_FOTOS", r"P:\MetaX\fotos_funcionarios")

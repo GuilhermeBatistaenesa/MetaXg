@@ -1,0 +1,13 @@
+{
+  "app_name": "MetaXg",
+  "install_dir": "C:\\\\MetaXg",
+  "network_release_dir": "P:\\\\ProcessoMetaX\\\\releases",
+  "network_latest_json": "P:\\\\ProcessoMetaX\\\\releases\\\\latest.json",
+  "github_repo": "GuilhermeBatistaenesa/MetaXg",
+  "exe_name": "MetaXg.exe",
+  "log_file": "C:\\\\MetaXg\\\\logs\\\\metax_last_run.log",
+  "prefer_network": true,
+  "allow_prerelease": false,
+  "run_args": [],
+  "log_level": "INFO"
+}

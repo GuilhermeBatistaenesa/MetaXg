@@ -47,6 +47,8 @@ Este projeto é uma automação (RPA) desenvolvida em Python para integrar o ban
 5.  **Configure as Variáveis de Ambiente**:
     - Copie o arquivo `.env.example` para `.env`.
     - Preencha as chaves com suas credenciais reais (SharePoint, Banco de Dados, MetaX).
+6.  **Pré-requisito Windows**:
+    - ODBC Driver 17/18 precisa estar instalado no Windows alvo.
 
 ## ▶️ Como Executar
 
@@ -95,3 +97,24 @@ A documentação técnica detalhada e versionada encontra-se na pasta `docs/`.
 1. Forcar `verificar_cadastro` retornar True -> deve gerar `VERIFIED_SUCCESS`.
 2. Forcar `verificar_cadastro` retornar False -> `action_saved` pode ser true, mas `outcome = SAVED_NOT_VERIFIED` e `run_status = INCONSISTENT`.
 3. Forcar excecao na verificacao -> `outcome = FAILED_VERIFICATION` e `run_status = INCONSISTENT`.
+
+## Padrao operacional (MetaXg)
+
+### Runner (update e execucao)
+- Arquivo: `runner.py`
+- Config: `config.json`
+- Fluxo: verifica latest.json na rede (P:\ProcessoMetaX\releases), valida SHA256, instala em `C:\MetaXg\app\current`, executa `MetaXg.exe`.
+- Fallback: GitHub Releases (`GuilhermeBatistaenesa/MetaXg`) se `github_repo` estiver configurado.
+
+### Scripts e atalhos
+- `run_main.bat`: executa `main.py` (usa `.venv` se existir).
+- `run_tests.bat`: executa pytest.
+- `build_windows.bat`: gera build onedir via PyInstaller.
+- `build_zip.bat`: gera zip + sha256 + latest.json.
+
+### Releases
+- Padrão de artefatos:
+  - `MetaXg_<versao>.zip`
+  - `MetaXg_<versao>.sha256`
+  - `latest.json`
+- Diretorio de rede: `P:\ProcessoMetaX\releases`

@@ -126,6 +126,8 @@ def formatar_pis(pis: str) -> str:
     if not pis:
         return ""
     pis = ''.join(filter(str.isdigit, str(pis)))
+    if len(pis) < 10:
+        raise ValueError(f"PIS/PASEP inválido: {pis}")
     if len(pis) < 11:
         pis = pis.zfill(11)
     if len(pis) != 11:

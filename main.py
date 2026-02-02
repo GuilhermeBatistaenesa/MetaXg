@@ -7,6 +7,16 @@ from datetime import datetime
 import pyodbc
 from custom_logger import logger
 from output_manager import OutputManager, KIND_JSON
+from outcomes import (
+    OUTCOME_FAILED_ACTION,
+    OUTCOME_FAILED_VERIFICATION,
+    OUTCOME_SAVED_NOT_VERIFIED,
+    OUTCOME_VERIFIED_SUCCESS,
+    OUTCOME_SKIPPED_ALREADY_EXISTS,
+    OUTCOME_SKIPPED_DRY_RUN,
+    OUTCOME_SKIPPED_EMAIL_DISABLED,
+    compute_totals,
+)
 from rpa_metax import iniciar_sessao, cadastrar_funcionario, obter_todos_rascunhos, verificar_cadastro
 from sharepoint import baixar_fotos_em_lote
 
@@ -257,7 +267,12 @@ def buscar_funcionarios_para_cadastro(data_admissao: str = None, filtro_nomes: l
 
 
 from notification import enviar_relatorio_email
-from reporting import gerar_relatorio_txt
+from reporting import (
+    gerar_relatorio_txt,
+    gerar_relatorio_json,
+    gerar_resumo_execucao_md,
+    gerar_diagnostico_ultima_execucao,
+)
 
 
 def _normalizar_nome(raw: str) -> str:
@@ -370,11 +385,11 @@ def _atualizar_fila_txt(path: str, nomes_processados: set[str]) -> int:
 
 
 def _escrever_documento_operacional_publico():
-    os.makedirs(os.path.dirname(PUBLIC_INPUTS_DIR), exist_ok=True)
-    path = os.path.join(PUBLIC_BASE_DIR, "04_AUTOMACOES", "MetaXg", "COMO_USAR_METAX.txt")
+    os.makedirs(PUBLIC_INPUTS_DIR, exist_ok=True)
+    path = os.path.join(PUBLIC_BASE_DIR, "COMO_USAR_METAX.txt")
     conteudo = (
         "OPERACAO METAXG (RAPIDO)\\n"
-        "1) Coloque o TXT em: P:\\\\GuilhermeCostaProenca\\\\04_AUTOMACOES\\\\MetaXg\\\\inputs\\\\cadastrar_metax.txt\\n"
+        f"1) Coloque o TXT em: {os.path.join(PUBLIC_INPUTS_DIR, 'cadastrar_metax.txt')}\\n"
         "2) Rode o robo normalmente (Python ou EXE).\\n"
         "3) Resolva o CAPTCHA quando solicitado.\\n"
         "4) Confira o relatorio em relatorios/ e o email (se habilitado).\\n"
@@ -416,27 +431,39 @@ def main():
         started_at=started_at,
     )
     logger.configure(output_manager, execution_id, started_at, log_level=args.log_level)
+    logger.set_run_status("RUNNING")
     _ensure_output_dirs()
     _escrever_documento_operacional_publico()
 
     logger.info("===== INICIO PROCESSO SHAREPOINT + METAX =====")
 
-    manifest = {
+    run_context = {
         "execution_id": execution_id,
         "object_name": OBJECT_NAME,
         "started_at": started_at.isoformat(),
         "finished_at": None,
-        "run_status": "CONSISTENT",
+        "duration_sec": None,
+        "run_status": "RUNNING",
+        "report_path": None,
+        "manifest_path": None,
+        "email_status": None,
+        "email_error": None,
         "public_write_ok": None,
         "public_write_error": None,
+        "environment": {
+            "cwd": ROOT_DIR,
+        },
+    }
+
+    manifest = {
+        "run_context": run_context,
+        "manifest_path": None,
         "totals": {
             "detected": 0,
-            "action_saved": 0,
-            "verified_success": 0,
-            "saved_not_verified": 0,
-            "failed_action": 0,
-            "failed_verification": 0,
+            "people_total": 0,
+            "by_outcome": {},
             "no_photo": 0,
+            "unknown_outcome": 0,
         },
         "people": [],
     }
@@ -497,7 +524,7 @@ def main():
                 "action_saved": False,
                 "verified": False,
                 "status_final": "FAILED",
-                "outcome": "FAILED_ACTION",
+                "outcome": OUTCOME_FAILED_ACTION,
                 "errors": {
                     "action_error": "",
                     "verification_error": "",
@@ -513,8 +540,8 @@ def main():
             if cpf_limpo in rascunhos_existentes:
                 logger.info(f"Funcionario {nome} ja consta nos rascunhos (CACHE). Pulando...", details={"cpf": cpf})
                 registro["attempted"] = False
-                registro["status_final"] = "FAILED"
-                registro["outcome"] = "FAILED_ACTION"
+                registro["status_final"] = "SKIPPED"
+                registro["outcome"] = OUTCOME_SKIPPED_ALREADY_EXISTS
                 registro["errors"]["action_error"] = "Ignorado: rascunho ja existente (cache)."
                 nomes_processados_no_run.add(_normalizar_nome(nome))
                 manifest["people"].append(registro)
@@ -536,7 +563,7 @@ def main():
                 registro["attempted"] = False
                 registro["action_saved"] = False
                 registro["status_final"] = "FAILED"
-                registro["outcome"] = "FAILED_ACTION"
+                registro["outcome"] = OUTCOME_FAILED_ACTION
                 registro["errors"]["action_error"] = str(e)
 
                 try:
@@ -578,21 +605,21 @@ def main():
                 if verificado:
                     registro["timestamps"]["verified_at"] = datetime.now().isoformat()
                     registro["status_final"] = "SUCCESS"
-                    registro["outcome"] = "VERIFIED_SUCCESS"
+                    registro["outcome"] = OUTCOME_VERIFIED_SUCCESS
                     rascunhos_existentes.add(cpf_limpo)
                     logger.info("Cache de rascunhos atualizado.", details={"cpf": cpf_limpo})
                 else:
                     logger.warn(f"Verificacao falhou para {nome}: {detalhe}", details={"cpf": cpf, "motivo": detalhe})
                     registro["status_final"] = "FAILED"
                     if detalhe and detalhe.lower().startswith("erro na verificacao"):
-                        registro["outcome"] = "FAILED_VERIFICATION"
+                        registro["outcome"] = OUTCOME_FAILED_VERIFICATION
                     else:
-                        registro["outcome"] = "SAVED_NOT_VERIFIED"
+                        registro["outcome"] = OUTCOME_SAVED_NOT_VERIFIED
                     registro["errors"]["verification_error"] = detalhe or "CPF nao encontrado na lista de rascunhos."
                     inconsistente = True
             else:
                 registro["status_final"] = "FAILED"
-                registro["outcome"] = "FAILED_ACTION"
+                registro["outcome"] = OUTCOME_FAILED_ACTION
                 registro["errors"]["action_error"] = action.get("error") or "Falha ao salvar rascunho."
 
             manifest["people"].append(registro)
@@ -613,33 +640,66 @@ def main():
             p.stop()
 
         finished_at = datetime.now()
-        manifest["finished_at"] = finished_at.isoformat()
+        run_context["finished_at"] = finished_at.isoformat()
+        run_context["duration_sec"] = int((finished_at - started_at).total_seconds())
 
-        totals = {
-            "detected": len(funcionarios),
-            "action_saved": len([p for p in manifest["people"] if p.get("action_saved")]),
-            "verified_success": len([p for p in manifest["people"] if p.get("outcome") == "VERIFIED_SUCCESS"]),
-            "saved_not_verified": len([p for p in manifest["people"] if p.get("outcome") == "SAVED_NOT_VERIFIED"]),
-            "failed_action": len([p for p in manifest["people"] if p.get("outcome") == "FAILED_ACTION"]),
-            "failed_verification": len([p for p in manifest["people"] if p.get("outcome") == "FAILED_VERIFICATION"]),
-            "no_photo": len([p for p in manifest["people"] if p.get("no_photo")]),
-        }
+        totals = compute_totals(manifest["people"], detected=len(funcionarios))
         manifest["totals"] = totals
 
-        if inconsistente or totals["saved_not_verified"] > 0:
-            manifest["run_status"] = "INCONSISTENT"
+        if (
+            inconsistente
+            or totals["by_outcome"].get(OUTCOME_SAVED_NOT_VERIFIED, 0) > 0
+            or totals["by_outcome"].get(OUTCOME_FAILED_ACTION, 0) > 0
+            or totals["by_outcome"].get(OUTCOME_FAILED_VERIFICATION, 0) > 0
+        ):
+            run_context["run_status"] = "INCONSISTENT"
+        else:
+            run_context["run_status"] = "CONSISTENT"
 
-        manifest["public_write_ok"] = output_manager.public_write_ok
-        manifest["public_write_error"] = output_manager.public_write_error
+        run_context["public_write_ok"] = output_manager.public_write_ok
+        run_context["public_write_error"] = output_manager.public_write_error
+        logger.set_run_status(run_context["run_status"])
 
         data_str = started_at.strftime("%Y-%m-%d_%H-%M-%S")
         manifest_filename = f"manifest_{data_str}__{execution_id}.json"
-        output_manager.write_json(KIND_JSON, manifest_filename, manifest)
+        final_manifest_path = output_manager.get_local_path(KIND_JSON, manifest_filename)
+        run_context["manifest_path"] = final_manifest_path
+        manifest["manifest_path"] = final_manifest_path
 
         logger.info("Gerando relatorios...")
-        gerar_relatorio_txt(manifest, output_manager)
+        report_path = gerar_relatorio_txt(manifest, output_manager)
+        run_context["report_path"] = report_path
+        resumo_path = gerar_resumo_execucao_md(manifest, output_manager)
+        run_context["resumo_path"] = resumo_path
+        relatorio_json_path = gerar_relatorio_json(manifest, output_manager)
+        run_context["relatorio_json_path"] = relatorio_json_path
+        diagnostico_path = gerar_diagnostico_ultima_execucao(manifest, output_manager)
+        run_context["diagnostico_path"] = diagnostico_path
+
+        manifest_partial_filename = f"manifest_partial_{data_str}__{execution_id}.json"
+        manifest_partial_path = output_manager.write_json(KIND_JSON, manifest_partial_filename, manifest)
+
         if not args.dry_run and not args.no_email:
-            enviar_relatorio_email(manifest)
+            try:
+                email_status = enviar_relatorio_email(
+                    manifest,
+                    report_path=report_path,
+                    manifest_path=final_manifest_path,
+                    partial_manifest_path=manifest_partial_path,
+                    attachment_paths=[report_path, manifest_partial_path],
+                )
+                run_context["email_status"] = email_status
+            except Exception as e:
+                run_context["email_status"] = "FAILED"
+                run_context["email_error"] = str(e)
+        else:
+            if args.dry_run:
+                run_context["email_status"] = OUTCOME_SKIPPED_DRY_RUN
+            else:
+                run_context["email_status"] = OUTCOME_SKIPPED_EMAIL_DISABLED
+
+        output_manager.write_json(KIND_JSON, manifest_filename, manifest)
+        logger.flush()
         logger.info("===== FIM PROCESSO =====")
 
 

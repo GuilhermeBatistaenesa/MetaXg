@@ -15,7 +15,7 @@ python main.py
 
 ### Executável
 ```powershell
-.\dist\MetaXg.exe
+.\dist\MetaXg\MetaXg.exe
 ```
 
 ## 3) Resolver CAPTCHA
@@ -32,6 +32,6 @@ python main.py
 - Debug JSON: `json/verify_debug_<cpf>_<timestamp>__<execid>.json`
 
 ## 6) Modo TXT (lista manual)
-- Arquivo: `inputs/cadastrar_metax.txt`
+- Arquivo: `P:\ProcessoMetaX\em processamento\cadastrar_metax.txt`
 - Um nome por linha; comentários com `#`
 - Se vazio, roda SQL padrão.
