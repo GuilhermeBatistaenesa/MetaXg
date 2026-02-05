@@ -49,6 +49,10 @@ Este projeto é uma automação (RPA) desenvolvida em Python para integrar o ban
     - Preencha as chaves com suas credenciais reais (SharePoint, Banco de Dados, MetaX).
 6.  **Pré-requisito Windows**:
     - ODBC Driver 17/18 precisa estar instalado no Windows alvo.
+7.  **E-mail (opcional)**:
+    - Requer Outlook Desktop instalado.
+    - A biblioteca `pywin32` ? instalada via `requirements.txt`.
+    - Se n?o quiser enviar e-mail, deixe `EMAIL_NOTIFICACAO` vazio ou rode com `--no-email`.
 
 ## ▶️ Como Executar
 
@@ -59,6 +63,8 @@ python main.py
 ```
 
 Os logs de execução serão salvos na pasta `logs/`. Screenshots de erros serão salvos em `logs/screenshots/`. Relatórios em `relatorios/`.
+Na rede (`P:\ProcessoMetaX`), as fotos ficam em `em processamento/`, `processados/` e `erros/`, e os relat?rios/logs s?o espelhados nos aliases `logs/`, `relatorios/` e `json/`.
+Fotos em `processados/` e `erros/` sao organizadas por data (YYYY-MM-DD).
 
 ## ❓ Troubleshooting (Resolução de Problemas)
 
@@ -76,7 +82,7 @@ Se a internet estiver lenta, o script tenta clicar em "Salvar" novamente e aguar
 ### 4. Portabilidade (Outros Computadores)
 Para rodar em outra máquina:
 1. **Instale Python e as dependências** (`requirements.txt`).
-2. **Copie o `.env`**: Configure as variáveis, especialmente `PASTA_FOTOS` se o caminho `P:\...` não existir na nova máquina.
+2. **Copie o `.env`**: Configure as variáveis, especialmente `FOTOS_EM_PROCESSAMENTO_DIR`, `FOTOS_PROCESSADOS_DIR`, `FOTOS_ERROS_DIR` (ou `PASTA_FOTOS` legado) se o caminho `P:\ProcessoMetaX` não existir na nova máquina.
 3. **Driver SQL**: Certifique-se que a máquina tem o "ODBC Driver for SQL Server" instalado.
 
 ## 📂 Estrutura do Projeto
@@ -111,6 +117,7 @@ A documentação técnica detalhada e versionada encontra-se na pasta `docs/`.
 - `run_tests.bat`: executa pytest.
 - `build_windows.bat`: gera build onedir via PyInstaller.
 - `build_zip.bat`: gera zip + sha256 + latest.json.
+Obs: `run_main.bat` cria o venv e instala dependÃªncias automaticamente na primeira execuÃ§Ã£o.
 
 ### Releases
 - Padrão de artefatos:

@@ -2,7 +2,7 @@
 
 ## 1) Atualizar repo
 ```powershell
-cd C:\Users\guilherme.batista\OneDrive\MetaXg
+cd P:\ProcessoMetaX\Codigo
 git pull
 ```
 
@@ -12,6 +12,9 @@ git pull
 . .\.venv\Scripts\Activate.ps1
 python main.py
 ```
+
+### Atalho (sem setup manual)
+- Basta clicar em `run_main.bat` (ele cria o venv e instala deps automaticamente na 1ª vez).
 
 ### Executável
 ```powershell

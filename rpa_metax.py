@@ -19,12 +19,15 @@ from mappings import (
 
 from config import (
     METAX_LOGIN, METAX_PASSWORD, METAX_URL_LOGIN,
-    PASTA_FOTOS
+    METAX_CONTRATO_MECANICA_VALUE, METAX_CONTRATO_MECANICA_LABEL,
+    METAX_CONTRATO_ELETROMECANICA_VALUE, METAX_CONTRATO_ELETROMECANICA_LABEL,
+    METAX_CONTRATO_DEFAULT_VALUE, METAX_CONTRATO_DEFAULT_LABEL,
+    FOTOS_BUSCA_DIRS
 )
 from output_manager import OutputManager, KIND_SCREENSHOTS, KIND_JSON
 
 TIMEOUT = 60000 
-TEMPO_CAPTCHA_MS = 30000 
+TEMPO_CAPTCHA_MS = 180000 
 
 
 def anexar_foto(page, caminho_foto: str) -> None:
@@ -150,7 +153,74 @@ def selecionar_cargo_por_descricao(page, descricao_cargo: str) -> bool:
 # ==============================================================================
 # NOVA FUNÇÃO DE INÍCIO DE SESSÃO (Retorna p, browser, page)
 # ==============================================================================
-def iniciar_sessao(headless: bool = False):
+def _listar_opcoes_contrato(page) -> list[dict]:
+    return page.evaluate(
+        """() => {
+            const sel = document.querySelector('#comboContrato');
+            if (!sel) return [];
+            return Array.from(sel.options || []).map(o => ({
+                value: o.value || "",
+                label: (o.textContent || "").trim()
+            }));
+        }"""
+    )
+
+
+def _selecionar_contrato(page, contrato_value: str | None, contrato_label: str | None):
+    opcoes = _listar_opcoes_contrato(page)
+    if not opcoes:
+        logger.warn("Nenhuma opcao encontrada no combo de contrato.")
+
+    def _norm_label(texto: str | None) -> str:
+        if not texto:
+            return ""
+        return " ".join(texto.upper().split())
+
+    alvo_value = contrato_value or None
+    alvo_label = contrato_label or None
+    if not (alvo_value or alvo_label):
+        if METAX_CONTRATO_DEFAULT_VALUE:
+            alvo_value = METAX_CONTRATO_DEFAULT_VALUE
+        elif METAX_CONTRATO_DEFAULT_LABEL:
+            alvo_label = METAX_CONTRATO_DEFAULT_LABEL
+        else:
+            logger.warn("Nenhum contrato informado. Mantendo selecao atual do portal.")
+            return
+
+    escolhida = None
+    if alvo_value:
+        for o in opcoes:
+            if o.get("value") == alvo_value:
+                escolhida = o
+                break
+    if not escolhida and alvo_label:
+        alvo_norm = _norm_label(alvo_label)
+        for o in opcoes:
+            if _norm_label(o.get("label")) == alvo_norm:
+                escolhida = o
+                break
+    if not escolhida and alvo_label:
+        alvo_up = _norm_label(alvo_label)
+        for o in opcoes:
+            if alvo_up and alvo_up in _norm_label(o.get("label")):
+                escolhida = o
+                break
+
+    if not escolhida:
+        logger.error(
+            "Contrato nao encontrado no combo.",
+            details={"value": alvo_value, "label": alvo_label, "opcoes": opcoes},
+        )
+        raise ValueError("Contrato nao encontrado no combo de selecao.")
+
+    page.select_option('#comboContrato', value=escolhida.get("value", ""), timeout=5000)
+    logger.info(
+        "Contrato selecionado",
+        details={"value": escolhida.get("value"), "label": escolhida.get("label")},
+    )
+
+
+def iniciar_sessao(headless: bool = False, contrato_value: str | None = None, contrato_label: str | None = None):
     """
     Inicia o browser, realiza login e navega até a tela inicial do sistema.
     
@@ -178,7 +248,7 @@ def iniciar_sessao(headless: bool = False):
         page.fill('#txtLogin', METAX_LOGIN)
         page.wait_for_selector('#txtSenha', timeout=TIMEOUT)
         page.fill('#txtSenha', METAX_PASSWORD)        
-        logger.info("👉 AÇÃO NECESSÁRIA: Resolva o CAPTCHA e clique em 'Validar' MANUALMENTE.")
+        logger.info("ACAO NECESSARIA: Resolva o CAPTCHA e clique em 'Validar' MANUALMENTE.")
         logger.info("Aguardando você acessar a próxima tela...")
         
         # Removemos o wait_for_timeout fixo e o click automático 
@@ -186,7 +256,7 @@ def iniciar_sessao(headless: bool = False):
         # page.wait_for_timeout(TEMPO_CAPTCHA_MS)
         # page.click('button:has-text("Validar")')
 
-        page.wait_for_selector('#comboContrato', state='visible', timeout=TIMEOUT)
+        page.wait_for_selector('#comboContrato', state='visible', timeout=TEMPO_CAPTCHA_MS)
 
         # Espera as opções carregarem
         page.wait_for_function(
@@ -194,10 +264,10 @@ def iniciar_sessao(headless: bool = False):
                 const sel = document.querySelector('#comboContrato');
                 return sel && sel.options.length >= 1;
             }""",
-            timeout=TIMEOUT
+            timeout=TEMPO_CAPTCHA_MS
         )
 
-        page.select_option('#comboContrato', value='6578')
+        _selecionar_contrato(page, contrato_value, contrato_label)
 
         # força o evento de change (importante nesse sistema)
         page.evaluate("""
@@ -295,7 +365,7 @@ def obter_todos_rascunhos(page) -> set[str]:
             # Esperar recarregamento
             page.wait_for_timeout(2000)
         else:
-            logger.error("⚠️ ATENÇÃO: Filtro de Rascunho NÃO foi aplicado! Coletando TODOS os registros.")
+            logger.error("ATENCAO: Filtro de Rascunho NAO foi aplicado! Coletando TODOS os registros.")
         
     except Exception as e:
         logger.error(f"Erro ao filtrar por rascunho: {e}. Continuando sem filtro (RISCO DE COLETAR TODOS OS REGISTROS)")
@@ -663,6 +733,12 @@ def preencher_documentos(page, funcionario: dict) -> None:
 
 def preencher_endereco(page, funcionario: dict) -> None:
     """Preenche endereço e tenta buscar via CEP."""
+    CEP_FALLBACK = "79582034"
+    UF_FALLBACK = "MS"
+    CIDADE_FALLBACK = "CHAPADAO DO SUL"
+    BAIRRO_FALLBACK = "CENTRO"
+    LOGRADOURO_FALLBACK = "RUA SEM NOME"
+
     cep = funcionario.get("CEP", "")
     endereconumero = funcionario.get("NUMERO", "")
     estado_rm = (funcionario.get("ESTADO") or "").strip().upper()
@@ -670,17 +746,48 @@ def preencher_endereco(page, funcionario: dict) -> None:
         logger.warn("Estado (RM) vazio; usando fallback UF=SP", details={"cpf": funcionario.get("CPF")})
         estado_rm = "SP"
     
-    # Ajuste para número 0 -> S/N
-    if str(endereconumero).strip() == "0":
-        endereconumero = "S/N"
+    def _normalizar_numero(valor):
+        digits = "".join([c for c in str(valor) if c.isdigit()])
+        if not digits:
+            return "0"
+        digits = digits.lstrip("0") or "0"
+        return digits
+
+    endereconumero = _normalizar_numero(endereconumero)
 
     page.wait_for_selector('a[href="#menu1"]', timeout=TIMEOUT)
     page.click('a[href="#menu1"]')
 
     def preencher_e_buscar_cep(cep_tentativa):
-        # Force remove readonly if present
-        page.evaluate("document.querySelector('#CEP').removeAttribute('readonly')")
-        page.fill('#CEP', cep_tentativa)
+        # Normaliza CEP para 8 digitos (com ou sem hifen)
+        cep_digits = "".join([c for c in str(cep_tentativa) if c.isdigit()])
+        if len(cep_digits) == 8:
+            cep_formatado = f"{cep_digits[:5]}-{cep_digits[5:]}"
+        else:
+            cep_formatado = str(cep_tentativa)
+
+        # Forca setar valor via JS (campo pode estar readonly/disabled)
+        page.evaluate(
+            """(val) => {
+                const el = document.querySelector('#CEP');
+                if (!el) return;
+                el.removeAttribute('readonly');
+                el.removeAttribute('disabled');
+                el.value = val;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+            }""",
+            cep_formatado,
+        )
+
+        # Tentativa adicional de digitar (alguns formularios so atualizam com input real)
+        try:
+            campo = page.locator("#CEP")
+            campo.click(force=True)
+            campo.press("Control+A")
+            campo.type(cep_formatado, delay=20)
+        except Exception:
+            pass
         
         # Nuke Modals antes de clicar
         fechar_modais_bloqueantes(page)
@@ -704,14 +811,9 @@ def preencher_endereco(page, funcionario: dict) -> None:
 
     if not bairro_preenchido:
         logger.warn(f"CEP {cep} não encontrou endereço. Tentando fallback...", details={"cep": cep})
-        
-        # Fallback inteligente por Estado
-        if estado_rm == "BA":
-             preencher_e_buscar_cep("40015000") # Salvador/BA (Comércio)
-        elif estado_rm == "PA":
-             preencher_e_buscar_cep("66010000") # Belém/PA (Campina)
-        else:
-             preencher_e_buscar_cep("79582034") # CEP Genérico (MS) - Chapadão
+
+        # Fallback fixo (orientacao MetaX)
+        preencher_e_buscar_cep(CEP_FALLBACK) # CEP Generico (MS) - Chapadao
              
         fallback_usado = True
 
@@ -736,33 +838,55 @@ def preencher_endereco(page, funcionario: dict) -> None:
             page.locator("#comboEstado").press("Tab")
             logger.info(f"Estado ajustado via RM: {estado_rm}", details={"uf": estado_rm})
     else:
-        # Se usou fallback mas o campo tá vazio, força o estado do RM (que deve bater com o fallback)
-        if not estado_valor_atual and estado_rm in MAPA_ESTADO_NATAL:
-             logger.warn(f"Fallback usado mas Estado vazio. Forçando Estado RM: {estado_rm}")
-             page.evaluate("document.getElementById('comboEstado').disabled = false;")
-             page.select_option("#comboEstado", value=MAPA_ESTADO_NATAL[estado_rm])
+        valor_fallback = MAPA_ESTADO_NATAL.get(UF_FALLBACK)
+        if valor_fallback and estado_valor_atual != valor_fallback:
+            logger.warn(f"Fallback usado: Forcando Estado para {UF_FALLBACK}")
+            page.evaluate("document.getElementById('comboEstado').disabled = false;")
+            page.select_option("#comboEstado", value=valor_fallback)
         else:
-             logger.info(f"Fallback usado: Mantendo estado original do CEP ({estado_valor_atual}) para evitar erro de validação.")
+            logger.info(f"Fallback usado: Mantendo estado atual ({estado_valor_atual}).")
 
-    # TENTATIVA DE FORÇAR CIDADE (Para casos de fallback onde a cidade fica vazia)
+    # Se fallback foi usado, manter cidade/bairro/logradouro conforme o CEP valido
+    def _forcar_cidade_fallback():
+        try:
+            ok = page.evaluate("""(cidade) => {
+                const alvo = (cidade || "").trim().toUpperCase();
+                const candidatos = Array.from(document.querySelectorAll(
+                    'select[id*="Cidade"], select[name*="Cidade"], input[id*="Cidade"], input[name*="Cidade"]'
+                ));
+                let aplicou = false;
+                for (const el of candidatos) {
+                    if (!el) continue;
+                    el.removeAttribute('readonly');
+                    el.removeAttribute('disabled');
+                    if (el.tagName === "SELECT") {
+                        let opt = Array.from(el.options || []).find(o => (o.textContent || "").trim().toUpperCase() === alvo);
+                        if (!opt) {
+                            opt = Array.from(el.options || []).find(o => (o.value || "").trim() && (o.value || "") !== "0");
+                        }
+                        if (opt) {
+                            el.value = opt.value;
+                            el.dispatchEvent(new Event('change', { bubbles: true }));
+                            el.dispatchEvent(new Event('input', { bubbles: true }));
+                            aplicou = true;
+                        }
+                    } else {
+                        el.value = cidade;
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                        aplicou = true;
+                    }
+                }
+                return aplicou;
+            }""", CIDADE_FALLBACK);
+            return bool(ok)
+        except Exception:
+            return False
+
     if fallback_usado:
-        cidade_rm = funcionario.get("NATURALIDADE", "").strip().upper()
-        if cidade_rm:
-            logger.info(f"Fallback usado: Tentando forçar cidade para {cidade_rm}...")
-            # Tenta seletores comuns de cidade
-            try:
-                 page.evaluate(f"document.querySelector('#nomeCidade').value = '{cidade_rm}';")
-            except: pass
-            try:
-                 page.evaluate(f"document.querySelector('#cidade').value = '{cidade_rm}';")
-            except: pass
-            try:
-                 # Se for combo, é mais chato, mas tenta setar se existir
-                 page.evaluate(f"document.querySelector('#comboCidade').disabled = false;")
-                 # Esse aqui é chute, geralmente combo precisa de ID. 
-                 # Mas se for input text (comum quando falha cep), o value funciona.
-            except: pass
-
+        logger.info("Fallback usado: mantendo endereco do CEP (sem sobrescrever cidade/bairro/logradouro).")
+        if not _forcar_cidade_fallback():
+            logger.warn("Fallback usado: nao foi possivel forcar cidade.")
 
     # BAIRRO
     fechar_modais_bloqueantes(page)
@@ -771,11 +895,16 @@ def preencher_endereco(page, funcionario: dict) -> None:
     page.evaluate("document.querySelector('#nomeBairro').disabled = false")
     bairro_metax = campo_bairro.input_value().strip()
 
-    if (not bairro_metax) and bairro_rm:
+    if (not fallback_usado) and (not bairro_metax) and bairro_rm:
         campo_bairro.click()
         campo_bairro.fill("")
         campo_bairro.type(bairro_rm, delay=50)
         logger.info(f"Bairro preenchido via RM: {bairro_rm}", details={"bairro": bairro_rm})
+    elif fallback_usado and not bairro_metax:
+        campo_bairro.click()
+        campo_bairro.fill("")
+        campo_bairro.type(BAIRRO_FALLBACK, delay=50)
+        logger.warn(f"Fallback usado: Bairro preenchido com padrao '{BAIRRO_FALLBACK}'.")
 
     # LOGRADOURO
     fechar_modais_bloqueantes(page)
@@ -784,11 +913,20 @@ def preencher_endereco(page, funcionario: dict) -> None:
     page.evaluate("document.querySelector('#comboLogradouro').disabled = false")
     logradouro_metax = campo_logradouro.input_value().strip()
 
-    if (not logradouro_metax) and rua_rm:
+    if (not fallback_usado) and (not logradouro_metax) and rua_rm:
         campo_logradouro.click()
         campo_logradouro.fill("")
         campo_logradouro.type(rua_rm, delay=50)
         logger.info(f"Logradouro preenchido via RM: {rua_rm}", details={"logradouro": rua_rm})
+    elif fallback_usado and not logradouro_metax:
+        campo_logradouro.click()
+        campo_logradouro.fill("")
+        campo_logradouro.type(LOGRADOURO_FALLBACK, delay=50)
+        logger.warn(f"Fallback usado: Logradouro preenchido com padrao '{LOGRADOURO_FALLBACK}'.")
+
+    if fallback_usado and endereconumero == "0":
+        endereconumero = "1"
+        logger.warn("Fallback usado: Numero ajustado para 1 (campo nao aceita S/N).")
 
     # NUMERO
     fechar_modais_bloqueantes(page)
@@ -989,7 +1127,7 @@ def cadastrar_funcionario(page, funcionario: dict, output_manager: OutputManager
 
     caminho_final = caminho_foto
     if not caminho_final:
-        caminho_final = buscar_foto_por_cpf(PASTA_FOTOS, cpf)
+        caminho_final = buscar_foto_por_cpf(FOTOS_BUSCA_DIRS, cpf)
 
     no_photo = False
     if caminho_final:

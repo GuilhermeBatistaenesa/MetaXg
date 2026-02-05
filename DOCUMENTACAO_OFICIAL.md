@@ -5,6 +5,7 @@ MetaXg e um robo RPA para integracao entre RM Labore e portal MetaX, com padrao 
 
 ## Pre-requisitos (Windows alvo)
 - ODBC Driver 17/18 precisa estar instalado.
+- (Opcional) Outlook Desktop instalado para envio de e-mail (usa `pywin32`).
 
 ## Modos de execucao
 1. Execucao direta do app (`main.py`) em ambiente Python.
@@ -14,11 +15,13 @@ MetaXg e um robo RPA para integracao entre RM Labore e portal MetaX, com padrao 
 Base: `P:\ProcessoMetaX`
 
 Pastas operacionais:
+- `Codigo\`
 - `em processamento\`
 - `processados\`
 - `erros\`
 - `logs\` (alias)
 - `relatorios\` (alias)
+- `json\` (alias)
 - `07_LOGS\` (padrão legado por data)
 - `08_RELATORIOS\` (padrão legado por data)
 - `09_JSON\` (padrão legado por data)
@@ -40,6 +43,12 @@ Padrao adicional (em `logs\`):
 
 Rede:
 Os mesmos artefatos sao gravados em `P:\ProcessoMetaX\07_LOGS`, `08_RELATORIOS`, `09_JSON`, `10_SCREENSHOTS` (padrao legado por data) e em alias `P:\ProcessoMetaX\logs`, `relatorios`, `json`, `logs\screenshots`.
+
+Fotos (pipeline):
+- Entrada e processamento: `P:\ProcessoMetaX\em processamento`
+- Concluidas/ok: `P:\ProcessoMetaX\processados`
+- Com erro: `P:\ProcessoMetaX\erros`
+- Observacao: fotos em `processados` e `erros` ficam em subpastas por data (YYYY-MM-DD).
 
 ## Runner: atualizacao segura
 Fluxo:

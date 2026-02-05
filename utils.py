@@ -2,7 +2,7 @@ import unicodedata
 from datetime import date, datetime
 import os
 import tempfile
-from PIL import Image
+from PIL import Image, ImageOps
 from custom_logger import logger
 from mappings import MAPA_CARGOS_METAX
 
@@ -20,7 +20,9 @@ def reduzir_foto_para_metax(caminho_original: str, tamanho_max_kb: int = 40) -> 
 
         # Tenta abrir como imagem
         try:
-            img = Image.open(caminho_original).convert("RGB")
+            img = Image.open(caminho_original)
+            # Corrige orientaÃ§Ã£o baseada no EXIF (fotos de celular)
+            img = ImageOps.exif_transpose(img).convert("RGB")
         except Exception as e:
             logger.warn(f"Falha ao abrir imagem {caminho_original}: {e}")
             return None
@@ -62,23 +64,32 @@ def reduzir_foto_para_metax(caminho_original: str, tamanho_max_kb: int = 40) -> 
         return None
 
 
-def buscar_foto_por_cpf(pasta_fotos: str, cpf: str) -> str | None:
-    """
-    Busca uma foto na pasta especificada.
-    Aceita apenas extensões de imagem.
-    """
-    cpf_numerico = ''.join(filter(str.isdigit, str(cpf)))
-
-    if not os.path.exists(pasta_fotos):
+def _buscar_foto_em_pasta(pasta_fotos: str, cpf_numerico: str) -> str | None:
+    if not pasta_fotos or not os.path.exists(pasta_fotos):
         return None
-
     for arquivo in os.listdir(pasta_fotos):
         nome = arquivo.lower()
         # Removido suporte a .pdf
         if cpf_numerico in nome and nome.endswith((".jpg", ".jpeg", ".png")):
             return os.path.join(pasta_fotos, arquivo)
-
     return None
+
+
+def buscar_foto_por_cpf(pasta_fotos: str | list[str], cpf: str) -> str | None:
+    """
+    Busca uma foto na(s) pasta(s) especificada(s).
+    Aceita apenas extens??es de imagem.
+    """
+    cpf_numerico = ''.join(filter(str.isdigit, str(cpf)))
+
+    if isinstance(pasta_fotos, (list, tuple, set)):
+        for pasta in pasta_fotos:
+            achado = _buscar_foto_em_pasta(pasta, cpf_numerico)
+            if achado:
+                return achado
+        return None
+
+    return _buscar_foto_em_pasta(pasta_fotos, cpf_numerico)
 
 def ajustar_descricao_cargo(descricao_rm: str) -> str:
     """Normaliza e ajusta a descrição do cargo baseando-se no mapa de cargos."""

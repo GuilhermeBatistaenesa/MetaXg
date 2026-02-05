@@ -1,11 +1,14 @@
 import argparse
 import os
+import re
+import shutil
 import unicodedata
 import uuid
 from datetime import datetime
 
 import pyodbc
 from custom_logger import logger
+from auditoria_excel import log_run
 from output_manager import OutputManager, KIND_JSON
 from outcomes import (
     OUTCOME_FAILED_ACTION,
@@ -21,8 +24,13 @@ from rpa_metax import iniciar_sessao, cadastrar_funcionario, obter_todos_rascunh
 from sharepoint import baixar_fotos_em_lote
 
 from config import (
-    DB_DRIVER, DB_SERVER, DB_NAME, DB_USER, DB_PASSWORD, PASTA_FOTOS, DIAS_RETROATIVOS,
-    ROOT_DIR, PUBLIC_BASE_DIR, PUBLIC_INPUTS_DIR, OBJECT_NAME
+    DB_DRIVER, DB_SERVER, DB_NAME, DB_USER, DB_PASSWORD, DIAS_RETROATIVOS,
+    ROOT_DIR, PUBLIC_BASE_DIR, PUBLIC_INPUTS_DIR, OBJECT_NAME,
+    PUBLIC_CODE_DIR, PUBLIC_PROCESSADOS_DIR, PUBLIC_ERROS_DIR,
+    PUBLIC_LOGS_DIR, PUBLIC_RELATORIOS_DIR, PUBLIC_JSON_DIR, PUBLIC_RELEASES_DIR,
+    FOTOS_EM_PROCESSAMENTO_DIR, FOTOS_PROCESSADOS_DIR, FOTOS_ERROS_DIR, FOTOS_BUSCA_DIRS,
+    METAX_CONTRATO_MECANICA_VALUE, METAX_CONTRATO_MECANICA_LABEL,
+    METAX_CONTRATO_ELETROMECANICA_VALUE, METAX_CONTRATO_ELETROMECANICA_LABEL
 )
 
 
@@ -143,6 +151,7 @@ def buscar_funcionarios_para_cadastro(data_admissao: str = None, filtro_nomes: l
             F.DATAADMISSAO,
             F.SALARIO,
             F.CODFUNCAO,
+            SEC.NROCENCUSTOCONT AS CENTRO_CUSTO,
 
             COALESCE(
                 UPPER(LTRIM(RTRIM(FU.NOME))),
@@ -164,6 +173,10 @@ def buscar_funcionarios_para_cadastro(data_admissao: str = None, filtro_nomes: l
         LEFT JOIN PFUNCAO FU
             ON FU.CODCOLIGADA = F.CODCOLIGADA
         AND CAST(FU.CODIGO AS VARCHAR(20)) = F.CODFUNCAO
+
+        LEFT JOIN PSECAO SEC
+            ON SEC.CODCOLIGADA = F.CODCOLIGADA
+        AND SEC.CODIGO = F.CODSECAO
 
         OUTER APPLY (
             SELECT TOP 1 D.NOME
@@ -283,6 +296,66 @@ def _normalizar_nome(raw: str) -> str:
     texto = "".join([c for c in texto if not unicodedata.combining(c)])
     texto = " ".join(texto.split())
     return texto.upper()
+
+
+def _extrair_bloco_centro_custo(centro_custo: str) -> str | None:
+    if not centro_custo:
+        return None
+    texto = str(centro_custo).strip()
+    partes = [p for p in re.split(r"[^\d]+", texto) if p]
+    if len(partes) < 2:
+        return None
+    bloco = None
+    # Preferencia: NROCENCUSTOCONT (ex: 125.01.004) -> bloco = partes[1]
+    if len(partes) >= 3 and len(partes[1]) == 2:
+        bloco = partes[1]
+    # Heuristica para CODSECAO longo (ex: 36.125.001.01.01.01.01.2.004)
+    elif len(partes) >= 4 and len(partes[2]) == 3:
+        bloco = partes[3]
+    else:
+        bloco = partes[1]
+    if len(bloco) == 1:
+        bloco = bloco.zfill(2)
+    return bloco
+
+
+def _classificar_contrato_por_centro_custo(centro_custo: str) -> str:
+    bloco = _extrair_bloco_centro_custo(centro_custo)
+    if bloco == "01":
+        return "MECANICA"
+    if bloco == "02":
+        return "ELETROMECANICA"
+    return "DESCONHECIDO"
+
+
+def _resolver_contrato_config(chave: str) -> tuple[str | None, str | None]:
+    if chave == "MECANICA":
+        return METAX_CONTRATO_MECANICA_VALUE, METAX_CONTRATO_MECANICA_LABEL
+    if chave == "ELETROMECANICA":
+        return METAX_CONTRATO_ELETROMECANICA_VALUE, METAX_CONTRATO_ELETROMECANICA_LABEL
+    return None, None
+
+
+def _criar_registro_base(nome: str, cpf_limpo: str, pessoa_started_at: str) -> dict:
+    return {
+        "nome": nome,
+        "cpf": cpf_limpo,
+        "attempted": False,
+        "action_saved": False,
+        "verified": False,
+        "status_final": "FAILED",
+        "outcome": OUTCOME_FAILED_ACTION,
+        "errors": {
+            "action_error": "",
+            "verification_error": "",
+        },
+        "timestamps": {
+            "started_at": pessoa_started_at,
+            "saved_at": None,
+            "verified_at": None,
+        },
+        "no_photo": False,
+    }
 
 
 def carregar_lista_nomes_txt(path: str) -> list[str]:
@@ -409,6 +482,117 @@ def _ensure_output_dirs():
     os.makedirs(os.path.join(ROOT_DIR, "json"), exist_ok=True)
 
 
+def _ensure_public_dirs():
+    public_dirs = [
+        PUBLIC_BASE_DIR,
+        PUBLIC_CODE_DIR,
+        PUBLIC_INPUTS_DIR,
+        PUBLIC_PROCESSADOS_DIR,
+        PUBLIC_ERROS_DIR,
+        PUBLIC_LOGS_DIR,
+        os.path.join(PUBLIC_LOGS_DIR, "screenshots") if PUBLIC_LOGS_DIR else None,
+        PUBLIC_RELATORIOS_DIR,
+        PUBLIC_JSON_DIR,
+        PUBLIC_RELEASES_DIR,
+        FOTOS_EM_PROCESSAMENTO_DIR,
+        FOTOS_PROCESSADOS_DIR,
+        FOTOS_ERROS_DIR,
+    ]
+    for path in public_dirs:
+        if not path:
+            continue
+        try:
+            os.makedirs(path, exist_ok=True)
+        except Exception as e:
+            logger.warn("Falha ao criar pasta publica", details={"path": path, "error": str(e)})
+
+
+def _is_subpath(path: str, base: str) -> bool:
+    if not path or not base:
+        return False
+    try:
+        path_abs = os.path.abspath(path)
+        base_abs = os.path.abspath(base)
+        return os.path.commonpath([path_abs, base_abs]) == base_abs
+    except ValueError:
+        return False
+
+
+def _mover_foto_para_dir(caminho_foto: str, destino_dir: str, execution_id: str) -> str | None:
+    if not caminho_foto or not os.path.exists(caminho_foto):
+        return None
+    if not destino_dir:
+        return caminho_foto
+    os.makedirs(destino_dir, exist_ok=True)
+    destino = os.path.join(destino_dir, os.path.basename(caminho_foto))
+    if os.path.abspath(destino) == os.path.abspath(caminho_foto):
+        return destino
+    if os.path.exists(destino):
+        base, ext = os.path.splitext(os.path.basename(caminho_foto))
+        destino = os.path.join(destino_dir, f"{base}__{execution_id}{ext}")
+    shutil.move(caminho_foto, destino)
+    return destino
+
+
+def _resolver_destino_foto(status_final: str, started_at: datetime) -> str:
+    base = FOTOS_PROCESSADOS_DIR if status_final and status_final != "FAILED" else FOTOS_ERROS_DIR
+    if not base:
+        return ""
+    data_dir = started_at.strftime("%Y-%m-%d")
+    return os.path.join(base, data_dir)
+
+
+def _classificar_foto_pos_processamento(
+    caminho_foto: str, status_final: str, execution_id: str, started_at: datetime
+):
+    if not caminho_foto:
+        return
+    if not _is_subpath(caminho_foto, FOTOS_EM_PROCESSAMENTO_DIR):
+        return
+    destino = _resolver_destino_foto(status_final, started_at)
+    try:
+        novo_caminho = _mover_foto_para_dir(caminho_foto, destino, execution_id)
+        if novo_caminho and novo_caminho != caminho_foto:
+            logger.info(
+                "Foto movida apos processamento",
+                details={"from": caminho_foto, "to": novo_caminho, "status_final": status_final},
+            )
+    except Exception as e:
+        logger.warn(
+            "Falha ao mover foto apos processamento",
+            details={"path": caminho_foto, "destino": destino, "error": str(e)},
+        )
+
+
+def _montar_erros_auditoria(manifest: dict) -> list[dict]:
+    erros = []
+    for person in manifest.get("people", []):
+        if person.get("status_final") != "FAILED":
+            continue
+        errors = person.get("errors") or {}
+        action_error = str(errors.get("action_error") or "")
+        verification_error = str(errors.get("verification_error") or "")
+        mensagem = action_error or verification_error
+        if not mensagem:
+            continue
+        etapa = "Verificacao" if verification_error else "Cadastro"
+        timestamps = person.get("timestamps") or {}
+        timestamp = timestamps.get("saved_at") or timestamps.get("started_at") or datetime.now().isoformat()
+        erros.append(
+            {
+                "timestamp": timestamp,
+                "etapa": etapa,
+                "tipo_erro": "Tecnico",
+                "codigo_erro": "",
+                "mensagem_resumida": mensagem[:250],
+                "registro_id": person.get("cpf") or person.get("nome") or "",
+                "mitigacao": "Pendente",
+                "resolvido_em": "",
+            }
+        )
+    return erros
+
+
 def _parse_args():
     parser = argparse.ArgumentParser(description="RPA MetaXg")
     parser.add_argument("--txt", dest="txt_path", help="Caminho do TXT para modo manual")
@@ -432,6 +616,7 @@ def main():
     )
     logger.configure(output_manager, execution_id, started_at, log_level=args.log_level)
     logger.set_run_status("RUNNING")
+    _ensure_public_dirs()
     _ensure_output_dirs()
     _escrever_documento_operacional_publico()
 
@@ -470,10 +655,6 @@ def main():
 
     inconsistente = False
     funcionarios = []
-    p = None
-    browser = None
-    page = None
-
     try:
         txt_path = args.txt_path or os.path.join(PUBLIC_INPUTS_DIR, "cadastrar_metax.txt")
         lock_path = f"{txt_path}.lock"
@@ -503,126 +684,171 @@ def main():
 
         fotos = baixar_fotos_em_lote(
             funcionarios=funcionarios,
-            pasta_destino=PASTA_FOTOS,
+            pasta_destino=FOTOS_EM_PROCESSAMENTO_DIR,
+            pastas_busca=FOTOS_BUSCA_DIRS,
         )
 
-        p, browser, page = iniciar_sessao(headless=args.headless)
+        grupos = {"MECANICA": [], "ELETROMECANICA": [], "DESCONHECIDO": []}
+        for func in funcionarios:
+            centro_custo = func.get("CENTRO_CUSTO")
+            chave = _classificar_contrato_por_centro_custo(centro_custo)
+            grupos[chave].append(func)
 
-        rascunhos_existentes = obter_todos_rascunhos(page)
+        logger.info(
+            "Resumo por contrato (centro de custo)",
+            details={
+                "mecanica": len(grupos["MECANICA"]),
+                "eletromecanica": len(grupos["ELETROMECANICA"]),
+                "desconhecido": len(grupos["DESCONHECIDO"]),
+            },
+        )
+
         nomes_processados_no_run = set()
 
-        for func in funcionarios:
-            cpf = func["CPF"]
-            cpf_limpo = "".join(filter(str.isdigit, str(cpf)))
-            nome = func["NOME"]
-
-            pessoa_started_at = datetime.now().isoformat()
-            registro = {
-                "nome": nome,
-                "cpf": cpf_limpo,
-                "attempted": False,
-                "action_saved": False,
-                "verified": False,
-                "status_final": "FAILED",
-                "outcome": OUTCOME_FAILED_ACTION,
-                "errors": {
-                    "action_error": "",
-                    "verification_error": "",
-                },
-                "timestamps": {
-                    "started_at": pessoa_started_at,
-                    "saved_at": None,
-                    "verified_at": None,
-                },
-                "no_photo": False,
-            }
-
-            if cpf_limpo in rascunhos_existentes:
-                logger.info(f"Funcionario {nome} ja consta nos rascunhos (CACHE). Pulando...", details={"cpf": cpf})
-                registro["attempted"] = False
-                registro["status_final"] = "SKIPPED"
-                registro["outcome"] = OUTCOME_SKIPPED_ALREADY_EXISTS
-                registro["errors"]["action_error"] = "Ignorado: rascunho ja existente (cache)."
-                nomes_processados_no_run.add(_normalizar_nome(nome))
+        if grupos["DESCONHECIDO"]:
+            for func in grupos["DESCONHECIDO"]:
+                cpf = func["CPF"]
+                cpf_limpo = "".join(filter(str.isdigit, str(cpf)))
+                nome = func["NOME"]
+                caminho_foto = fotos.get(cpf)
+                centro_custo = func.get("CENTRO_CUSTO")
+                pessoa_started_at = datetime.now().isoformat()
+                registro = _criar_registro_base(nome, cpf_limpo, pessoa_started_at)
+                registro["status_final"] = "FAILED"
+                registro["outcome"] = OUTCOME_FAILED_ACTION
+                registro["errors"]["action_error"] = f"Centro de custo desconhecido: {centro_custo}"
+                logger.warn(
+                    f"Centro de custo desconhecido para {nome}. Pulando cadastro.",
+                    details={"cpf": cpf_limpo, "centro_custo": centro_custo},
+                )
                 manifest["people"].append(registro)
+                _classificar_foto_pos_processamento(caminho_foto, registro["status_final"], execution_id, started_at)
+
+        for chave in ("MECANICA", "ELETROMECANICA"):
+            funcs_grupo = grupos[chave]
+            if not funcs_grupo:
                 continue
 
-            caminho_foto = fotos.get(cpf)
-            if caminho_foto:
-                logger.info(f"Foto pronta para {nome}", details={"cpf": cpf, "foto": caminho_foto})
-            else:
-                logger.warn(f"Foto nao encontrada para {nome}", details={"cpf": cpf})
-                registro["no_photo"] = True
+            contrato_value, contrato_label = _resolver_contrato_config(chave)
+            if not (contrato_value or contrato_label):
+                raise ValueError(
+                    f"Contrato {chave} nao configurado. "
+                    f"Defina METAX_CONTRATO_{chave}_VALUE ou METAX_CONTRATO_{chave}_LABEL no .env"
+                )
 
-            logger.info(f"Iniciando cadastro de {nome} ({cpf})", details={"funcionario": nome, "cpf": cpf})
+            logger.info(f"Iniciando sessao para contrato {chave}...")
+            p, browser, page = iniciar_sessao(
+                headless=args.headless,
+                contrato_value=contrato_value,
+                contrato_label=contrato_label,
+            )
 
             try:
-                action = cadastrar_funcionario(page, func, output_manager, caminho_foto)
-            except Exception as e:
-                logger.error(f"Falha ao cadastrar {nome}: {e}", details={"cpf": cpf, "erro": str(e)})
-                registro["attempted"] = False
-                registro["action_saved"] = False
-                registro["status_final"] = "FAILED"
-                registro["outcome"] = OUTCOME_FAILED_ACTION
-                registro["errors"]["action_error"] = str(e)
+                rascunhos_existentes = obter_todos_rascunhos(page)
 
-                try:
-                    page.goto("https://portal.metax.ind.br/", timeout=5000)
-                except Exception:
-                    pass
+                for func in funcs_grupo:
+                    cpf = func["CPF"]
+                    cpf_limpo = "".join(filter(str.isdigit, str(cpf)))
+                    nome = func["NOME"]
 
-                manifest["people"].append(registro)
-                continue
+                    pessoa_started_at = datetime.now().isoformat()
+                    registro = _criar_registro_base(nome, cpf_limpo, pessoa_started_at)
+                    caminho_foto = fotos.get(cpf)
 
-            # Blindagem do contrato de retorno do action
-            if not isinstance(action, dict):
-                action = {"attempted": False, "saved": False, "no_photo": False, "error": "Retorno invalido", "detail": ""}
-            action = {
-                "attempted": bool(action.get("attempted", False)),
-                "saved": bool(action.get("saved", False)),
-                "no_photo": bool(action.get("no_photo", False)),
-                "error": str(action.get("error", "")),
-                "detail": str(action.get("detail", "")),
-            }
+                    if cpf_limpo in rascunhos_existentes:
+                        logger.info(f"Funcionario {nome} ja consta nos rascunhos (CACHE). Pulando...", details={"cpf": cpf})
+                        registro["attempted"] = False
+                        registro["status_final"] = "SKIPPED"
+                        registro["outcome"] = OUTCOME_SKIPPED_ALREADY_EXISTS
+                        registro["errors"]["action_error"] = "Ignorado: rascunho ja existente (cache)."
+                        nomes_processados_no_run.add(_normalizar_nome(nome))
+                        manifest["people"].append(registro)
+                        _classificar_foto_pos_processamento(caminho_foto, registro["status_final"], execution_id, started_at)
+                        continue
 
-            registro["attempted"] = action["attempted"]
-            registro["action_saved"] = action["saved"]
-            if action.get("no_photo"):
-                registro["no_photo"] = True
-            if registro["attempted"]:
-                nomes_processados_no_run.add(_normalizar_nome(nome))
-
-            if registro["action_saved"]:
-                registro["timestamps"]["saved_at"] = datetime.now().isoformat()
-                logger.info(f"[VERIFY] start cpf={cpf_limpo}, nome={nome}")
-                try:
-                    verificado, detalhe = verificar_cadastro(page, func, output_manager)
-                except Exception as e:
-                    verificado, detalhe = False, f"Erro na verificacao: {e}"
-                logger.info(f"[VERIFY] result cpf={cpf_limpo} verified={bool(verificado)} detail={detalhe}")
-
-                registro["verified"] = bool(verificado)
-                if verificado:
-                    registro["timestamps"]["verified_at"] = datetime.now().isoformat()
-                    registro["status_final"] = "SUCCESS"
-                    registro["outcome"] = OUTCOME_VERIFIED_SUCCESS
-                    rascunhos_existentes.add(cpf_limpo)
-                    logger.info("Cache de rascunhos atualizado.", details={"cpf": cpf_limpo})
-                else:
-                    logger.warn(f"Verificacao falhou para {nome}: {detalhe}", details={"cpf": cpf, "motivo": detalhe})
-                    registro["status_final"] = "FAILED"
-                    if detalhe and detalhe.lower().startswith("erro na verificacao"):
-                        registro["outcome"] = OUTCOME_FAILED_VERIFICATION
+                    if caminho_foto:
+                        logger.info(f"Foto pronta para {nome}", details={"cpf": cpf, "foto": caminho_foto})
                     else:
-                        registro["outcome"] = OUTCOME_SAVED_NOT_VERIFIED
-                    registro["errors"]["verification_error"] = detalhe or "CPF nao encontrado na lista de rascunhos."
-                    inconsistente = True
-            else:
-                registro["status_final"] = "FAILED"
-                registro["outcome"] = OUTCOME_FAILED_ACTION
-                registro["errors"]["action_error"] = action.get("error") or "Falha ao salvar rascunho."
+                        logger.warn(f"Foto nao encontrada para {nome}", details={"cpf": cpf})
+                        registro["no_photo"] = True
 
-            manifest["people"].append(registro)
+                    logger.info(f"Iniciando cadastro de {nome} ({cpf})", details={"funcionario": nome, "cpf": cpf})
+
+                    try:
+                        action = cadastrar_funcionario(page, func, output_manager, caminho_foto)
+                    except Exception as e:
+                        logger.error(f"Falha ao cadastrar {nome}: {e}", details={"cpf": cpf, "erro": str(e)})
+                        registro["attempted"] = False
+                        registro["action_saved"] = False
+                        registro["status_final"] = "FAILED"
+                        registro["outcome"] = OUTCOME_FAILED_ACTION
+                        registro["errors"]["action_error"] = str(e)
+
+                        try:
+                            page.goto("https://portal.metax.ind.br/", timeout=5000)
+                        except Exception:
+                            pass
+
+                        manifest["people"].append(registro)
+                        _classificar_foto_pos_processamento(caminho_foto, registro["status_final"], execution_id, started_at)
+                        continue
+
+                    # Blindagem do contrato de retorno do action
+                    if not isinstance(action, dict):
+                        action = {"attempted": False, "saved": False, "no_photo": False, "error": "Retorno invalido", "detail": ""}
+                    action = {
+                        "attempted": bool(action.get("attempted", False)),
+                        "saved": bool(action.get("saved", False)),
+                        "no_photo": bool(action.get("no_photo", False)),
+                        "error": str(action.get("error", "")),
+                        "detail": str(action.get("detail", "")),
+                    }
+
+                    registro["attempted"] = action["attempted"]
+                    registro["action_saved"] = action["saved"]
+                    if action.get("no_photo"):
+                        registro["no_photo"] = True
+                    if registro["attempted"]:
+                        nomes_processados_no_run.add(_normalizar_nome(nome))
+
+                    if registro["action_saved"]:
+                        registro["timestamps"]["saved_at"] = datetime.now().isoformat()
+                        logger.info(f"[VERIFY] start cpf={cpf_limpo}, nome={nome}")
+                        try:
+                            verificado, detalhe = verificar_cadastro(page, func, output_manager)
+                        except Exception as e:
+                            verificado, detalhe = False, f"Erro na verificacao: {e}"
+                        logger.info(f"[VERIFY] result cpf={cpf_limpo} verified={bool(verificado)} detail={detalhe}")
+
+                        registro["verified"] = bool(verificado)
+                        if verificado:
+                            registro["timestamps"]["verified_at"] = datetime.now().isoformat()
+                            registro["status_final"] = "SUCCESS"
+                            registro["outcome"] = OUTCOME_VERIFIED_SUCCESS
+                            rascunhos_existentes.add(cpf_limpo)
+                            logger.info("Cache de rascunhos atualizado.", details={"cpf": cpf_limpo})
+                        else:
+                            logger.warn(f"Verificacao falhou para {nome}: {detalhe}", details={"cpf": cpf, "motivo": detalhe})
+                            registro["status_final"] = "FAILED"
+                            if detalhe and detalhe.lower().startswith("erro na verificacao"):
+                                registro["outcome"] = OUTCOME_FAILED_VERIFICATION
+                            else:
+                                registro["outcome"] = OUTCOME_SAVED_NOT_VERIFIED
+                            registro["errors"]["verification_error"] = detalhe or "CPF nao encontrado na lista de rascunhos."
+                            inconsistente = True
+                    else:
+                        registro["status_final"] = "FAILED"
+                        registro["outcome"] = OUTCOME_FAILED_ACTION
+                        registro["errors"]["action_error"] = action.get("error") or "Falha ao salvar rascunho."
+
+                    manifest["people"].append(registro)
+                    _classificar_foto_pos_processamento(caminho_foto, registro["status_final"], execution_id, started_at)
+            finally:
+                if browser:
+                    logger.info("Fechando navegador...")
+                    browser.close()
+                if p:
+                    p.stop()
 
     finally:
         try:
@@ -632,12 +858,6 @@ def main():
         finally:
             if "lock_ok" in locals() and lock_ok:
                 _liberar_lock(lock_path)
-
-        if browser:
-            logger.info("Fechando navegador...")
-            browser.close()
-        if p:
-            p.stop()
 
         finished_at = datetime.now()
         run_context["finished_at"] = finished_at.isoformat()
@@ -699,6 +919,35 @@ def main():
                 run_context["email_status"] = OUTCOME_SKIPPED_EMAIL_DISABLED
 
         output_manager.write_json(KIND_JSON, manifest_filename, manifest)
+        try:
+            total_sucesso = sum(1 for p in manifest.get("people", []) if p.get("status_final") == "SUCCESS")
+            total_erro = sum(1 for p in manifest.get("people", []) if p.get("status_final") == "FAILED")
+            total_processado = total_sucesso + total_erro
+            skipped = len(manifest.get("people", [])) - total_processado
+            observacoes = ""
+            if skipped > 0:
+                observacoes = f"Skipped={skipped}"
+
+            audit_run_data = {
+                "run_id": execution_id,
+                "started_at": started_at,
+                "finished_at": finished_at,
+                "duration_sec": run_context.get("duration_sec"),
+                "total_processado": total_processado,
+                "total_sucesso": total_sucesso,
+                "total_erro": total_erro,
+                "erros_auto_mitigados": 0,
+                "erros_manuais": 0,
+                "ambiente": os.getenv("METAX_ENV", "PROD"),
+                "observacoes": observacoes,
+                "commit_hash": os.getenv("GIT_COMMIT") or os.getenv("GITHUB_SHA") or "",
+                "build_id": os.getenv("BUILD_ID") or os.getenv("GITHUB_RUN_ID") or "",
+            }
+            audit_errors = _montar_erros_auditoria(manifest)
+            audit_result = log_run(audit_run_data, audit_errors)
+            logger.info("Auditoria Excel atualizada", details=audit_result)
+        except Exception as e:
+            logger.error("Falha ao atualizar auditoria Excel", details={"error": str(e)})
         logger.flush()
         logger.info("===== FIM PROCESSO =====")
 

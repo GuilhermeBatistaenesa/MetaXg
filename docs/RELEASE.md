@@ -5,7 +5,7 @@ Este documento descreve como executar em modo dev e como gerar/rodar executávei
 ## 1) Modo dev (Python/venv)
 1. Abra o PowerShell na raiz do repo:
    ```powershell
-   cd C:\Users\guilherme.batista\OneDrive\MetaXg
+   cd P:\ProcessoMetaX\Codigo
    ```
 2. (Opcional) Use o script de setup:
    ```powershell
