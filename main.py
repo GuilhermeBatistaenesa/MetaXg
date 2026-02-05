@@ -2,6 +2,7 @@ import argparse
 import os
 import re
 import shutil
+import time
 import unicodedata
 import uuid
 from datetime import datetime
@@ -36,6 +37,7 @@ from config import (
 
 def obter_conexao() -> pyodbc.Connection:
     """Estabelece conexao com o banco de dados SQL Server."""
+    connect_timeout = os.getenv("METAX_SQL_CONNECT_TIMEOUT", "15")
     drivers_alternativos = [
         DB_DRIVER,
         "ODBC Driver 17 for SQL Server",
@@ -57,7 +59,8 @@ def obter_conexao() -> pyodbc.Connection:
                     f"SERVER={DB_SERVER};"
                     f"DATABASE={DB_NAME};"
                     f"UID={DB_USER};"
-                    f"PWD={DB_PASSWORD}"
+                    f"PWD={DB_PASSWORD};"
+                    f"Connection Timeout={connect_timeout}"
                 )
                 logger.info(f"Conexao estabelecida com sucesso usando driver: {driver}", details={"driver": driver})
                 return conexao
@@ -268,15 +271,64 @@ def buscar_funcionarios_para_cadastro(data_admissao: str = None, filtro_nomes: l
         ORDER BY F.DATAADMISSAO ASC;
     """
 
-    logger.info("Executing SQL Query", details={"sql": sql})
+    sql_preview = sql.replace("\n", " ").strip()
+    if len(sql_preview) > 300:
+        sql_preview = sql_preview[:300] + "...(truncado)"
+    logger.info(
+        "Executing SQL Query",
+        details={"sql_preview": sql_preview, "sql_len": len(sql), "has_params": bool(params)},
+    )
     with obter_conexao() as conn:
         cursor = conn.cursor()
-        if params:
-            cursor.execute(sql, params)
-        else:
-            cursor.execute(sql)
+        if os.getenv("METAX_SQL_READ_UNCOMMITTED", "1") == "1":
+            try:
+                cursor.execute("SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
+                logger.info("SQL isolation READ UNCOMMITTED habilitado")
+            except Exception as e:
+                logger.warn("Falha ao setar isolation level", details={"error": str(e)})
+        lock_timeout_ms = os.getenv("METAX_SQL_LOCK_TIMEOUT_MS", "30000")
+        if lock_timeout_ms:
+            try:
+                cursor.execute(f"SET LOCK_TIMEOUT {int(lock_timeout_ms)}")
+            except Exception as e:
+                logger.warn("Falha ao setar LOCK_TIMEOUT", details={"error": str(e)})
+
+        max_retries = int(os.getenv("METAX_SQL_RETRIES", "2"))
+        backoff_sec = int(os.getenv("METAX_SQL_RETRY_BACKOFF_SEC", "5"))
+
+        logger.info("SQL Query iniciada", details={"lock_timeout_ms": lock_timeout_ms, "retries": max_retries})
+        exec_started = datetime.now()
+        last_error = None
+        for attempt in range(1, max_retries + 2):
+            try:
+                if params:
+                    cursor.execute(sql, params)
+                else:
+                    cursor.execute(sql)
+                last_error = None
+                break
+            except Exception as e:
+                last_error = e
+                msg = str(e)
+                is_lock_timeout = "Lock request time out period exceeded" in msg or "1222" in msg
+                if is_lock_timeout and attempt <= max_retries:
+                    logger.warn(
+                        "Timeout de lock na query, tentando novamente",
+                        details={"attempt": attempt, "error": msg},
+                    )
+                    time.sleep(backoff_sec)
+                    continue
+                raise
+        if last_error:
+            raise last_error
+        exec_elapsed = int((datetime.now() - exec_started).total_seconds())
+        logger.info("SQL Query executada, lendo resultados...", details={"exec_time_sec": exec_elapsed})
         colunas = [c[0] for c in cursor.description]
-        return [dict(zip(colunas, row)) for row in cursor.fetchall()]
+        fetch_started = datetime.now()
+        rows = cursor.fetchall()
+        fetch_elapsed = int((datetime.now() - fetch_started).total_seconds())
+        logger.info("SQL Query finalizada", details={"rows": len(rows), "fetch_time_sec": fetch_elapsed})
+        return [dict(zip(colunas, row)) for row in rows]
 
 
 from notification import enviar_relatorio_email
@@ -655,6 +707,7 @@ def main():
 
     inconsistente = False
     funcionarios = []
+    sql_error = None
     try:
         txt_path = args.txt_path or os.path.join(PUBLIC_INPUTS_DIR, "cadastrar_metax.txt")
         lock_path = f"{txt_path}.lock"
@@ -671,10 +724,20 @@ def main():
 
         if nomes_txt:
             logger.info("Modo TXT ativo: filtrando SQL por lista manual.")
-            funcionarios = buscar_funcionarios_para_cadastro(filtro_nomes=nomes_txt)
+            try:
+                funcionarios = buscar_funcionarios_para_cadastro(filtro_nomes=nomes_txt)
+            except Exception as e:
+                sql_error = str(e)
+                logger.error("Falha ao buscar funcionarios", details={"error": sql_error})
+                funcionarios = []
         else:
             logger.info("Modo normal: sem TXT, buscando via SQL padrao.")
-            funcionarios = buscar_funcionarios_para_cadastro(filtro_nomes=None)
+            try:
+                funcionarios = buscar_funcionarios_para_cadastro(filtro_nomes=None)
+            except Exception as e:
+                sql_error = str(e)
+                logger.error("Falha ao buscar funcionarios", details={"error": sql_error})
+                funcionarios = []
 
         if not funcionarios:
             logger.info("Nenhum funcionario encontrado para processar.")
@@ -866,7 +929,9 @@ def main():
         totals = compute_totals(manifest["people"], detected=len(funcionarios))
         manifest["totals"] = totals
 
-        if (
+        if sql_error:
+            run_context["run_status"] = "INCONSISTENT"
+        elif (
             inconsistente
             or totals["by_outcome"].get(OUTCOME_SAVED_NOT_VERIFIED, 0) > 0
             or totals["by_outcome"].get(OUTCOME_FAILED_ACTION, 0) > 0

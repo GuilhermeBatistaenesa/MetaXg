@@ -1,7 +1,5 @@
 import os
 import unicodedata
-from office365.sharepoint.client_context import ClientContext
-from office365.runtime.auth.client_credential import ClientCredential
 from custom_logger import logger
 
 
@@ -20,8 +18,11 @@ BASE_FOLDER = (
 )
 
 # CONEXÃO
-def conectar_sharepoint() -> ClientContext:
+def conectar_sharepoint():
     """Establishing a connection to SharePoint."""
+    from office365.sharepoint.client_context import ClientContext
+    from office365.runtime.auth.client_credential import ClientCredential
+
     creds = ClientCredential(CLIENT_ID, CLIENT_SECRET)
     return ClientContext(SITE_URL).with_credentials(creds)
 
