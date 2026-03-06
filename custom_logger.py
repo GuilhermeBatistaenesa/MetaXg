@@ -36,7 +36,7 @@ class CustomLogger:
         self.log_level = (log_level or "INFO").upper()
         timestamp = started_at.strftime("%Y-%m-%d_%H-%M-%S")
         self.log_filename = f"execution_{timestamp}__{execution_id}.jsonl"
-        print(f"[LOGGER] Logs serao salvos em: {self.log_filename}")
+        print(f"[LOGGER] Logs serao salvos em: {self.log_filename}", flush=True)
         self.last_public_flush_time = time.time()
 
         if self.buffer:
@@ -69,7 +69,7 @@ class CustomLogger:
             except Exception:
                 details_text = str(details)
             line = f"{line} | details={details_text}"
-        print(line)
+        print(line, flush=True)
 
         self._append_entry(entry)
 
@@ -85,7 +85,7 @@ class CustomLogger:
             if self._should_flush_public():
                 self._flush_public()
         except Exception as e:
-            print(f"[LOGGER ERROR] Failed to write log: {e}")
+            print(f"[LOGGER ERROR] Failed to write log: {e}", flush=True)
 
     def _flush_buffer(self):
         if not self.output_manager or not self.log_filename:
@@ -96,7 +96,7 @@ class CustomLogger:
             self.output_manager.append_text(KIND_LOGS, self.log_filename, content, write_public=False)
             self.output_manager.append_public_text_only(KIND_LOGS, self.log_filename, content)
         except Exception as e:
-            print(f"[LOGGER ERROR] Failed to flush logs: {e}")
+            print(f"[LOGGER ERROR] Failed to flush logs: {e}", flush=True)
 
     def _should_flush_public(self) -> bool:
         if not self.public_buffer:
@@ -116,7 +116,7 @@ class CustomLogger:
             self.output_manager.append_public_text_only(KIND_LOGS, self.log_filename, content)
             self.last_public_flush_time = time.time()
         except Exception as e:
-            print(f"[LOGGER ERROR] Failed to flush public logs: {e}")
+            print(f"[LOGGER ERROR] Failed to flush public logs: {e}", flush=True)
 
     def flush(self):
         self._flush_public()

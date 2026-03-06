@@ -5,7 +5,7 @@ Este documento descreve como executar em modo dev e como gerar/rodar executávei
 ## 1) Modo dev (Python/venv)
 1. Abra o PowerShell na raiz do repo:
    ```powershell
-   cd P:\ProcessoMetaX\Codigo
+   cd <PASTA_DO_PROJETO>
    ```
 2. (Opcional) Use o script de setup:
    ```powershell
@@ -56,7 +56,7 @@ Este documento descreve como executar em modo dev e como gerar/rodar executávei
 
 Exemplo (modo TXT + sem email):
 ```powershell
-.\dist\MetaXg\MetaXg.exe --txt P:\\ProcessoMetaX\\em processamento\\cadastrar_metax.txt --no-email
+.\dist\MetaXg\MetaXg.exe --txt "<PUBLIC_BASE_DIR>\em processamento\cadastrar_metax.txt" --no-email
 ```
 
 ## 4) Artefatos gerados (evidências)
@@ -71,7 +71,7 @@ Em falha de verificação, são criados:
 - `json/verify_debug_<cpf>_<timestamp>__<execid>.json`
 
 ## 5) Modo TXT (fila automática)
-- Arquivo padrão: `P:\\ProcessoMetaX\\em processamento\\cadastrar_metax.txt`
+- Arquivo padrão: `<PUBLIC_BASE_DIR>\em processamento\cadastrar_metax.txt` (ou `./em processamento/` se `PUBLIC_BASE_DIR` não existir)
 - Formato: um nome por linha; ignora vazios e comentários `#`
 - O TXT funciona como fila: nomes processados (attempted=True) ou ignorados por cache são removidos.
 - Se ficar vazio, o arquivo é apagado.
@@ -104,7 +104,7 @@ $env:PLAYWRIGHT_BROWSERS_PATH="C:\\caminho\\para\\ms-playwright"
 .\build_zip.bat -Bump patch
 ```
 
-Artefatos gerados em `P:\ProcessoMetaX\releases`:
+Artefatos gerados em `network_release_dir` (config.json):
 - `MetaXg_<versao>.zip`
 - `MetaXg_<versao>.sha256`
 - `latest.json`

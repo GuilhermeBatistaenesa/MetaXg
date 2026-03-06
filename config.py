@@ -36,7 +36,15 @@ METAX_CONTRATO_ELETROMECANICA_LABEL = os.getenv("METAX_CONTRATO_ELETROMECANICA_L
 METAX_CONTRATO_DEFAULT_VALUE = os.getenv("METAX_CONTRATO_DEFAULT_VALUE")
 METAX_CONTRATO_DEFAULT_LABEL = os.getenv("METAX_CONTRATO_DEFAULT_LABEL")
 
-PUBLIC_BASE_DIR = os.getenv("PUBLIC_BASE_DIR", r"P:\ProcessoMetaX")
+def _default_public_base() -> str:
+    env_base = os.getenv("PUBLIC_BASE_DIR")
+    if env_base:
+        return env_base
+    if os.path.exists(r"P:\ProcessoMetaX"):
+        return r"P:\ProcessoMetaX"
+    return ROOT_DIR
+
+PUBLIC_BASE_DIR = _default_public_base()
 OBJECT_NAME = os.getenv("OBJECT_NAME", "MetaXg")
 PUBLIC_INPUTS_DIR = os.getenv("PUBLIC_INPUTS_DIR", os.path.join(PUBLIC_BASE_DIR, "em processamento"))
 PUBLIC_CODE_DIR = os.getenv("PUBLIC_CODE_DIR", os.path.join(PUBLIC_BASE_DIR, "Codigo"))

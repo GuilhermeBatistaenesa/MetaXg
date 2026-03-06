@@ -61,19 +61,40 @@ class RunnerLogger:
         self._write("ERROR", message)
 
 
+def _resolve_path(value: str | None, base_dir: str) -> str | None:
+    if not value:
+        return value
+    if os.path.isabs(value):
+        return value
+    return os.path.abspath(os.path.join(base_dir, value))
+
+
 def load_runner_config(path: str) -> dict:
     if not os.path.exists(path):
         raise FileNotFoundError(f"config.json nao encontrado: {path}")
+    base_dir = os.path.dirname(os.path.abspath(path))
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
-    install_dir = data.get("install_dir") or data.get("install_root")
-    required = ["app_name", "network_release_dir", "network_latest_json", "exe_name", "log_file"]
-    missing = [k for k in required if k not in data or not data.get(k)]
-    if not install_dir:
-        missing.append("install_dir")
+    # Allow env overrides for portability
+    env_install_dir = os.getenv("METAX_INSTALL_DIR")
+    env_network_release_dir = os.getenv("METAX_NETWORK_RELEASE_DIR")
+    env_network_latest_json = os.getenv("METAX_NETWORK_LATEST_JSON")
+    env_log_file = os.getenv("METAX_LOG_FILE")
+
+    install_dir = env_install_dir or data.get("install_dir") or data.get("install_root")
+    data["install_dir"] = _resolve_path(install_dir, base_dir)
+    data["network_release_dir"] = _resolve_path(
+        env_network_release_dir or data.get("network_release_dir"), base_dir
+    )
+    data["network_latest_json"] = _resolve_path(
+        env_network_latest_json or data.get("network_latest_json"), base_dir
+    )
+    data["log_file"] = _resolve_path(env_log_file or data.get("log_file"), base_dir)
+
+    required = ["app_name", "network_release_dir", "network_latest_json", "exe_name", "log_file", "install_dir"]
+    missing = [k for k in required if not data.get(k)]
     if missing:
         raise ValueError(f"config.json invalido, faltando: {', '.join(missing)}")
-    data["install_dir"] = install_dir
     data["prefer_network"] = bool(data.get("prefer_network", True))
     data["allow_prerelease"] = bool(data.get("allow_prerelease", False))
     data["run_args"] = data.get("run_args") or []

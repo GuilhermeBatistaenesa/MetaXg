@@ -743,6 +743,21 @@ def main():
             logger.info("Nenhum funcionario encontrado para processar.")
             return
 
+        # Dedup por CPF para evitar processamento duplicado
+        unique_by_cpf: dict[str, dict] = {}
+        dup_count = 0
+        for func in funcionarios:
+            cpf = "".join(filter(str.isdigit, str(func.get("CPF", ""))))
+            if not cpf:
+                continue
+            if cpf in unique_by_cpf:
+                dup_count += 1
+                continue
+            unique_by_cpf[cpf] = func
+        if dup_count > 0:
+            logger.warn("Duplicatas removidas por CPF", details={"dup_count": dup_count})
+        funcionarios = list(unique_by_cpf.values())
+
         logger.info(f"Funcionarios a processar: {len(funcionarios)}", details={"total": len(funcionarios)})
 
         fotos = baixar_fotos_em_lote(
@@ -767,6 +782,7 @@ def main():
         )
 
         nomes_processados_no_run = set()
+        cpfs_processados_no_run = set()
 
         if grupos["DESCONHECIDO"]:
             for func in grupos["DESCONHECIDO"]:
@@ -813,6 +829,12 @@ def main():
                     cpf = func["CPF"]
                     cpf_limpo = "".join(filter(str.isdigit, str(cpf)))
                     nome = func["NOME"]
+                    if cpf_limpo in cpfs_processados_no_run:
+                        logger.warn(
+                            f"CPF duplicado no run. Pulando {nome}.",
+                            details={"cpf": cpf_limpo},
+                        )
+                        continue
 
                     pessoa_started_at = datetime.now().isoformat()
                     registro = _criar_registro_base(nome, cpf_limpo, pessoa_started_at)
@@ -873,6 +895,7 @@ def main():
                         registro["no_photo"] = True
                     if registro["attempted"]:
                         nomes_processados_no_run.add(_normalizar_nome(nome))
+                        cpfs_processados_no_run.add(cpf_limpo)
 
                     if registro["action_saved"]:
                         registro["timestamps"]["saved_at"] = datetime.now().isoformat()

@@ -1,3 +1,4 @@
+import os
 import tempfile
 from datetime import datetime
 
@@ -12,6 +13,7 @@ from outcomes import (
 
 def test_report_contains_sections_and_execution_id():
     started_at = datetime(2026, 1, 28, 9, 0, 0)
+    temp_dir = tempfile.mkdtemp()
     run_context = {
         "execution_id": "exec-123",
         "object_name": "MetaX",
@@ -20,12 +22,12 @@ def test_report_contains_sections_and_execution_id():
         "duration_sec": 0,
         "run_status": "CONSISTENT",
         "report_path": None,
-        "manifest_path": "C:\\temp\\manifest.json",
+        "manifest_path": os.path.join(temp_dir, "manifest.json"),
         "email_status": None,
         "email_error": None,
         "public_write_ok": True,
         "public_write_error": None,
-        "environment": {"cwd": "C:\\repo"},
+        "environment": {"cwd": temp_dir},
     }
     people = [
         {"nome": "Ana", "cpf": "123", "outcome": OUTCOME_FAILED_ACTION, "errors": {"action_error": "x"}, "no_photo": False},

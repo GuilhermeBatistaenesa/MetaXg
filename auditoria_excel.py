@@ -16,10 +16,30 @@ from openpyxl.utils.cell import range_boundaries
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
-DEFAULT_PATH = r"P:\AuditoriaRobos\Auditoria_Robos.xlsx"
-PENDING_DIR = r"P:\AuditoriaRobos\pending"
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+
+def _default_auditoria_path() -> str:
+    env_path = os.getenv("AUDITORIA_EXCEL_PATH")
+    if env_path:
+        return env_path
+    if os.path.exists(r"P:\AuditoriaRobos"):
+        return r"P:\AuditoriaRobos\Auditoria_Robos.xlsx"
+    return os.path.join(PROJECT_ROOT, "auditoria", "Auditoria_Robos.xlsx")
+
+
+def _default_pending_dir() -> str:
+    env_dir = os.getenv("AUDITORIA_PENDING_DIR")
+    if env_dir:
+        return env_dir
+    if os.path.exists(r"P:\AuditoriaRobos\pending"):
+        return r"P:\AuditoriaRobos\pending"
+    return os.path.join(PROJECT_ROOT, "auditoria", "pending")
+
+
+DEFAULT_PATH = _default_auditoria_path()
+PENDING_DIR = _default_pending_dir()
 ROBO_NOME = "MetaX"
-ORIGEM_CODIGO = r"P:\ProcessosMetaX\codigos"
+ORIGEM_CODIGO = os.getenv("ORIGEM_CODIGO", PROJECT_ROOT)
 VERSION_FALLBACK = "1.0.0"
 
 RUNS_HEADERS = [
@@ -89,110 +109,130 @@ def log_run(run_data: dict, errors: list[dict] | None = None, path: str = DEFAUL
         run_data = {}
     errors = errors or []
 
-    run_id = str(run_data.get("run_id") or uuid.uuid4())
-    robo_nome = str(run_data.get("robo_nome") or ROBO_NOME)
-    versao_robo = str(run_data.get("versao_robo") or _read_version())
-    ambiente = str(run_data.get("ambiente") or os.getenv("METAX_ENV", "PROD")).upper()
-    if ambiente not in LIST_AMBIENTE:
-        ambiente = "PROD"
-
-    started_at = _coerce_datetime(run_data.get("started_at")) or datetime.now()
-    finished_at = _coerce_datetime(run_data.get("finished_at")) or datetime.now()
-    duration_sec = run_data.get("duration_sec")
-    if duration_sec is None:
-        duration_sec = int((finished_at - started_at).total_seconds())
     try:
-        duration_sec = int(duration_sec)
-    except Exception:
-        duration_sec = 0
-    if duration_sec < 0:
-        duration_sec = 0
+        run_id = str(run_data.get("run_id") or uuid.uuid4())
+        robo_nome = str(run_data.get("robo_nome") or ROBO_NOME)
+        versao_robo = str(run_data.get("versao_robo") or _read_version())
+        ambiente = str(run_data.get("ambiente") or os.getenv("METAX_ENV", "PROD")).upper()
+        if ambiente not in LIST_AMBIENTE:
+            ambiente = "PROD"
 
-    total_processado = _safe_int(run_data.get("total_processado"))
-    total_sucesso = _safe_int(run_data.get("total_sucesso"))
-    total_erro = _safe_int(run_data.get("total_erro"))
-    erros_auto = _safe_int(run_data.get("erros_auto_mitigados"))
-    erros_manuais = _safe_int(run_data.get("erros_manuais"))
-
-    observacoes = str(run_data.get("observacoes") or "")
-    host_maquina = str(run_data.get("host_maquina") or platform.node())
-    usuario_execucao = str(run_data.get("usuario_execucao") or getpass.getuser())
-    origem_codigo = str(run_data.get("origem_codigo") or ORIGEM_CODIGO)
-    commit_hash = str(run_data.get("commit_hash") or _env_first(["GIT_COMMIT", "GITHUB_SHA", "CI_COMMIT_SHA"]) or "")
-    build_id = str(run_data.get("build_id") or _env_first(["BUILD_ID", "GITHUB_RUN_ID", "CI_PIPELINE_ID"]) or "")
-
-    resultado_final = run_data.get("resultado_final")
-    if not resultado_final:
-        pendentes = max(total_erro - erros_auto - erros_manuais, 0)
-        if total_processado == 0 or (total_sucesso + total_erro) != total_processado:
-            resultado_final = "Incompleto"
-        elif total_erro == (erros_auto + erros_manuais) and pendentes == 0:
-            resultado_final = "100% Concluído"
-        else:
-            resultado_final = "Concluído com Exceções"
-
-    run_row = {
-        "run_id": run_id,
-        "robo_nome": robo_nome,
-        "versao_robo": versao_robo,
-        "ambiente": ambiente,
-        "data_execucao": started_at.date(),
-        "hora_inicio": started_at.time(),
-        "hora_fim": finished_at.time(),
-        "duracao_segundos": duration_sec,
-        "total_processado": total_processado,
-        "total_sucesso": total_sucesso,
-        "total_erro": total_erro,
-        "erros_auto_mitigados": erros_auto,
-        "erros_manuais": erros_manuais,
-        "resultado_final": resultado_final,
-        "observacoes": observacoes,
-        "host_maquina": host_maquina,
-        "usuario_execucao": usuario_execucao,
-        "origem_codigo": origem_codigo,
-        "commit_hash": commit_hash,
-        "build_id": build_id,
-    }
-
-    wb = _load_or_create_workbook(path)
-    runs_ws = wb["RUNS"]
-    errors_ws = wb["ERRORS"]
-    robos_ws = wb["ROBOS"]
-
-    _ensure_validations_runs(runs_ws)
-    _ensure_validations_errors(errors_ws)
-
-    run_row_index = _append_run_row(runs_ws, run_row)
-    _append_errors(errors_ws, errors, run_id=run_id, robo_nome=robo_nome)
-    _ensure_robot_registry(robos_ws, robo_nome, origem_codigo, versao_robo, ambiente)
-
-    _update_table_range(runs_ws, "RunsTable", run_row_index)
-    _update_table_range(errors_ws, "ErrorsTable", errors_ws.max_row)
-    _update_table_range(robos_ws, "RobosTable", robos_ws.max_row)
-
-    try:
-        wb.save(path)
-        _logger.info(f"Auditoria salva em {path}")
-        return {
-            "run_id": run_id,
-            "saved_path": path,
-            "fallback": False,
-        }
-    except Exception as exc:
-        _logger.warning(f"Falha ao salvar auditoria principal: {exc}")
-        pending_path = _build_pending_path()
-        _safe_mkdir(PENDING_DIR)
-        saved_path = None
+        started_at = _coerce_datetime(run_data.get("started_at")) or datetime.now()
+        finished_at = _coerce_datetime(run_data.get("finished_at")) or datetime.now()
+        duration_sec = run_data.get("duration_sec")
+        if duration_sec is None:
+            duration_sec = int((finished_at - started_at).total_seconds())
         try:
-            wb.save(pending_path)
-            saved_path = pending_path
-            _logger.info(f"Auditoria salva em fallback: {pending_path}")
-        except Exception as fallback_exc:
-            _logger.error(f"Falha ao salvar auditoria fallback: {fallback_exc}")
-        _write_pending_json(run_id, run_row, errors, path, saved_path, str(exc))
-        return {
+            duration_sec = int(duration_sec)
+        except Exception:
+            duration_sec = 0
+        if duration_sec < 0:
+            duration_sec = 0
+
+        total_processado = _safe_int(run_data.get("total_processado"))
+        total_sucesso = _safe_int(run_data.get("total_sucesso"))
+        total_erro = _safe_int(run_data.get("total_erro"))
+        erros_auto = _safe_int(run_data.get("erros_auto_mitigados"))
+        erros_manuais = _safe_int(run_data.get("erros_manuais"))
+
+        observacoes = str(run_data.get("observacoes") or "")
+        host_maquina = str(run_data.get("host_maquina") or platform.node())
+        usuario_execucao = str(run_data.get("usuario_execucao") or getpass.getuser())
+        origem_codigo = str(run_data.get("origem_codigo") or ORIGEM_CODIGO)
+        commit_hash = str(run_data.get("commit_hash") or _env_first(["GIT_COMMIT", "GITHUB_SHA", "CI_COMMIT_SHA"]) or "")
+        build_id = str(run_data.get("build_id") or _env_first(["BUILD_ID", "GITHUB_RUN_ID", "CI_PIPELINE_ID"]) or "")
+
+        resultado_final = run_data.get("resultado_final")
+        if not resultado_final:
+            pendentes = max(total_erro - erros_auto - erros_manuais, 0)
+            if total_processado == 0 or (total_sucesso + total_erro) != total_processado:
+                resultado_final = "Incompleto"
+            elif total_erro == (erros_auto + erros_manuais) and pendentes == 0:
+                resultado_final = "100% Concluído"
+            else:
+                resultado_final = "Concluído com Exceções"
+
+        run_row = {
             "run_id": run_id,
-            "saved_path": saved_path,
+            "robo_nome": robo_nome,
+            "versao_robo": versao_robo,
+            "ambiente": ambiente,
+            "data_execucao": started_at.date(),
+            "hora_inicio": started_at.time(),
+            "hora_fim": finished_at.time(),
+            "duracao_segundos": duration_sec,
+            "total_processado": total_processado,
+            "total_sucesso": total_sucesso,
+            "total_erro": total_erro,
+            "erros_auto_mitigados": erros_auto,
+            "erros_manuais": erros_manuais,
+            "resultado_final": resultado_final,
+            "observacoes": observacoes,
+            "host_maquina": host_maquina,
+            "usuario_execucao": usuario_execucao,
+            "origem_codigo": origem_codigo,
+            "commit_hash": commit_hash,
+            "build_id": build_id,
+        }
+
+        wb = _load_or_create_workbook(path)
+        runs_ws = wb["RUNS"]
+        errors_ws = wb["ERRORS"]
+        robos_ws = wb["ROBOS"]
+
+        _ensure_validations_runs(runs_ws)
+        _ensure_validations_errors(errors_ws)
+
+        run_row_index = _append_run_row(runs_ws, run_row)
+        _append_errors(errors_ws, errors, run_id=run_id, robo_nome=robo_nome)
+        _ensure_robot_registry(robos_ws, robo_nome, origem_codigo, versao_robo, ambiente)
+
+        _update_table_range(runs_ws, "RunsTable", run_row_index)
+        _update_table_range(errors_ws, "ErrorsTable", errors_ws.max_row)
+        _update_table_range(robos_ws, "RobosTable", robos_ws.max_row)
+
+        try:
+            wb.save(path)
+            _logger.info(f"Auditoria salva em {path}")
+            return {
+                "run_id": run_id,
+                "saved_path": path,
+                "fallback": False,
+            }
+        except Exception as exc:
+            _logger.warning(f"Falha ao salvar auditoria principal: {exc}")
+            pending_path = _build_pending_path()
+            _safe_mkdir(PENDING_DIR)
+            saved_path = None
+            try:
+                wb.save(pending_path)
+                saved_path = pending_path
+                _logger.info(f"Auditoria salva em fallback: {pending_path}")
+            except Exception as fallback_exc:
+                _logger.error(f"Falha ao salvar auditoria fallback: {fallback_exc}")
+            _write_pending_json(run_id, run_row, errors, path, saved_path, str(exc))
+            return {
+                "run_id": run_id,
+                "saved_path": saved_path,
+                "fallback": True,
+                "error": str(exc),
+            }
+    except Exception as exc:
+        _logger.error(f"Falha inesperada ao registrar auditoria: {exc}")
+        try:
+            _write_pending_json(
+                run_data.get("run_id") or str(uuid.uuid4()),
+                run_data,
+                errors,
+                path,
+                None,
+                str(exc),
+            )
+        except Exception:
+            pass
+        return {
+            "run_id": str(run_data.get("run_id") or ""),
+            "saved_path": None,
             "fallback": True,
             "error": str(exc),
         }
@@ -308,12 +348,29 @@ def _normalize_error_dict(error: dict, run_id: str, robo_nome: str) -> dict:
 
 def _load_or_create_workbook(path: str) -> Workbook:
     if os.path.exists(path):
-        wb = load_workbook(path)
-        _ensure_sheets(wb)
-        return wb
+        try:
+            wb = load_workbook(path)
+            _ensure_sheets(wb)
+            return wb
+        except Exception as e:
+            _logger.warning(f"Arquivo de auditoria invalido ou corrompido: {e}")
+            _backup_corrupt_file(path)
     wb = Workbook()
     _create_template(wb)
     return wb
+
+
+def _backup_corrupt_file(path: str):
+    try:
+        base_dir = os.path.dirname(path)
+        name, ext = os.path.splitext(os.path.basename(path))
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = os.path.join(base_dir, f"{name}__CORROMPIDO__{timestamp}{ext or '.xlsx'}")
+        if os.path.exists(path):
+            os.replace(path, backup_path)
+            _logger.info(f"Backup do arquivo corrompido criado em {backup_path}")
+    except Exception as e:
+        _logger.error(f"Falha ao mover arquivo corrompido: {e}")
 
 
 def _ensure_sheets(wb: Workbook):

@@ -25,6 +25,16 @@ Se o Excel central estiver aberto e nao for possivel salvar:
 - Cria `P:\AuditoriaRobos\pending\Auditoria_Robos__PENDENTE__<timestamp>.xlsx`
 - Salva JSON com detalhes: `P:\AuditoriaRobos\pending\run__<run_id>.json`
 
+## Portabilidade (sem dependencias locais)
+Se o caminho de rede `P:\AuditoriaRobos` nao existir, o modulo usa por default:
+- `./auditoria/Auditoria_Robos.xlsx`
+- `./auditoria/pending/`
+
+Variaveis de ambiente opcionais:
+- `AUDITORIA_EXCEL_PATH`: caminho completo do Excel central
+- `AUDITORIA_PENDING_DIR`: pasta de fallback
+- `ORIGEM_CODIGO`: caminho logado no campo `origem_codigo`
+
 ## Dependencia
 - `openpyxl` foi adicionado em `requirements.txt`.
 

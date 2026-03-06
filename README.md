@@ -63,7 +63,7 @@ python main.py
 ```
 
 Os logs de execução serão salvos na pasta `logs/`. Screenshots de erros serão salvos em `logs/screenshots/`. Relatórios em `relatorios/`.
-Na rede (`P:\ProcessoMetaX`), as fotos ficam em `em processamento/`, `processados/` e `erros/`, e os relat?rios/logs s?o espelhados nos aliases `logs/`, `relatorios/` e `json/`.
+Se existir um diretório de rede configurado (`PUBLIC_BASE_DIR`), as fotos ficam em `em processamento/`, `processados/` e `erros/`, e os relatórios/logs são espelhados nos aliases `logs/`, `relatorios/` e `json/`. Caso contrário, usa o diretório do projeto.
 Fotos em `processados/` e `erros/` sao organizadas por data (YYYY-MM-DD).
 
 ## ❓ Troubleshooting (Resolução de Problemas)
@@ -82,7 +82,7 @@ Se a internet estiver lenta, o script tenta clicar em "Salvar" novamente e aguar
 ### 4. Portabilidade (Outros Computadores)
 Para rodar em outra máquina:
 1. **Instale Python e as dependências** (`requirements.txt`).
-2. **Copie o `.env`**: Configure as variáveis, especialmente `FOTOS_EM_PROCESSAMENTO_DIR`, `FOTOS_PROCESSADOS_DIR`, `FOTOS_ERROS_DIR` (ou `PASTA_FOTOS` legado) se o caminho `P:\ProcessoMetaX` não existir na nova máquina.
+2. **Copie o `.env`**: Configure as variáveis, especialmente `PUBLIC_BASE_DIR`, `FOTOS_EM_PROCESSAMENTO_DIR`, `FOTOS_PROCESSADOS_DIR`, `FOTOS_ERROS_DIR` (ou `PASTA_FOTOS` legado) se o caminho de rede não existir na nova máquina.
 3. **Driver SQL**: Certifique-se que a máquina tem o "ODBC Driver for SQL Server" instalado.
 
 ## 📂 Estrutura do Projeto
@@ -109,7 +109,7 @@ A documentação técnica detalhada e versionada encontra-se na pasta `docs/`.
 ### Runner (update e execucao)
 - Arquivo: `runner.py`
 - Config: `config.json`
-- Fluxo: verifica latest.json na rede (P:\ProcessoMetaX\releases), valida SHA256, instala em `C:\MetaXg\app\current`, executa `MetaXg.exe`.
+- Fluxo: verifica `latest.json` no `network_release_dir` (config.json), valida SHA256, instala em `install_dir\app\current`, executa `MetaXg.exe`.
 - Fallback: GitHub Releases (`GuilhermeBatistaenesa/MetaXg`) se `github_repo` estiver configurado.
 
 ### Scripts e atalhos
@@ -124,4 +124,4 @@ Obs: `run_main.bat` cria o venv e instala dependÃªncias automaticamente na pri
   - `MetaXg_<versao>.zip`
   - `MetaXg_<versao>.sha256`
   - `latest.json`
-- Diretorio de rede: `P:\ProcessoMetaX\releases`
+- Diretorio de releases: `network_release_dir` (config.json ou env)

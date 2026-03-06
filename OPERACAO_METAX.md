@@ -2,7 +2,7 @@
 
 ## 1) Atualizar repo
 ```powershell
-cd P:\ProcessoMetaX\Codigo
+cd <PASTA_DO_PROJETO>
 git pull
 ```
 
@@ -35,6 +35,6 @@ python main.py
 - Debug JSON: `json/verify_debug_<cpf>_<timestamp>__<execid>.json`
 
 ## 6) Modo TXT (lista manual)
-- Arquivo: `P:\ProcessoMetaX\em processamento\cadastrar_metax.txt`
+- Arquivo: `<PUBLIC_BASE_DIR>\em processamento\cadastrar_metax.txt` (ou `./em processamento/` se `PUBLIC_BASE_DIR` não existir)
 - Um nome por linha; comentários com `#`
 - Se vazio, roda SQL padrão.

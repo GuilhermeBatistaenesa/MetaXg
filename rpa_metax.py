@@ -560,37 +560,62 @@ def preencher_dados_pessoais(page, funcionario: dict) -> None:
     if cidade_rm:
         cidade_rm_norm = normalizar_texto(cidade_rm)
         page.wait_for_selector('#cidNasc', timeout=TIMEOUT)
-        page.wait_for_function(
-            """() => {
-                const sel = document.querySelector('#cidNasc');
-                return sel && sel.options && sel.options.length > 1;
-            }""",
-            timeout=TIMEOUT
-        )
-        opcoes = page.locator('#cidNasc option')
-        total = opcoes.count()
-        selecionado = False
-        for i in range(total):
-            texto_opcao = opcoes.nth(i).inner_text()
-            texto_opcao_norm = normalizar_texto(texto_opcao)
-            if texto_opcao_norm == cidade_rm_norm:
-                valor = opcoes.nth(i).get_attribute("value")
-                page.select_option('#cidNasc', value=valor)
-                logger.info(f"Cidade selecionada (exata): {texto_opcao}", details={"cidade": texto_opcao})
-                selecionado = True
-                break
-        if not selecionado:
-            for i in range(total):
-                texto_opcao = opcoes.nth(i).inner_text()
+        logger.info("Aguardando carregamento de cidades...")
+        try:
+            page.wait_for_function(
+                """() => {
+                    const sel = document.querySelector('#cidNasc');
+                    return sel && sel.options && sel.options.length > 1;
+                }""",
+                timeout=15000,
+            )
+        except Exception as e:
+            logger.warn(
+                "Lista de cidades nao carregou a tempo. Pulando selecao de cidade.",
+                details={"cidade": cidade_rm, "error": str(e)},
+            )
+            cidade_rm = None
+
+        if cidade_rm:
+            try:
+                opcoes = page.eval_on_selector_all(
+                    "#cidNasc option",
+                    "els => els.map(e => ({text: (e.textContent || '').trim(), value: e.value}))",
+                )
+            except Exception as e:
+                logger.warn(
+                    "Falha ao ler lista de cidades. Pulando selecao.",
+                    details={"cidade": cidade_rm, "error": str(e)},
+                )
+                opcoes = []
+
+            selecionado = False
+            for opt in opcoes:
+                texto_opcao = opt.get("text", "")
                 texto_opcao_norm = normalizar_texto(texto_opcao)
-                if cidade_rm_norm in texto_opcao_norm:
-                    valor = opcoes.nth(i).get_attribute("value")
-                    page.select_option('#cidNasc', value=valor)
-                    logger.info(f"Cidade selecionada (fallback): {texto_opcao}", details={"cidade": texto_opcao, "original": cidade_rm})
-                    selecionado = True
-                    break
-        if not selecionado:
-            logger.warn(f"Cidade não encontrada no MetaX: {cidade_rm}", details={"cidade": cidade_rm})
+                if texto_opcao_norm == cidade_rm_norm:
+                    valor = opt.get("value", "")
+                    if valor:
+                        page.select_option('#cidNasc', value=valor)
+                        logger.info(f"Cidade selecionada (exata): {texto_opcao}", details={"cidade": texto_opcao})
+                        selecionado = True
+                        break
+            if not selecionado:
+                for opt in opcoes:
+                    texto_opcao = opt.get("text", "")
+                    texto_opcao_norm = normalizar_texto(texto_opcao)
+                    if cidade_rm_norm in texto_opcao_norm:
+                        valor = opt.get("value", "")
+                        if valor:
+                            page.select_option('#cidNasc', value=valor)
+                            logger.info(
+                                f"Cidade selecionada (fallback): {texto_opcao}",
+                                details={"cidade": texto_opcao, "original": cidade_rm},
+                            )
+                            selecionado = True
+                            break
+            if not selecionado:
+                logger.warn(f"Cidade nao encontrada no MetaX: {cidade_rm}", details={"cidade": cidade_rm})
     else:
         logger.warn("NATURALIDADE vazia no RM")
 
@@ -753,6 +778,41 @@ def preencher_endereco(page, funcionario: dict) -> None:
         digits = digits.lstrip("0") or "0"
         return digits
 
+    def _selecionar_primeira_opcao(selector: str) -> bool:
+        try:
+            ok = page.evaluate(
+                """(sel) => {
+                    const el = document.querySelector(sel);
+                    if (!el) return false;
+                    const tag = (el.tagName || "").toUpperCase();
+                    if (tag === "SELECT") {
+                        const opts = Array.from(el.options || []);
+                        const opt = opts.find(o => (o.value || "").trim() && (o.value || "") !== "0");
+                        if (!opt) return false;
+                        el.value = opt.value;
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                        return true;
+                    }
+                    const listId = el.getAttribute("list");
+                    if (listId) {
+                        const list = document.getElementById(listId);
+                        if (!list) return false;
+                        const opt = Array.from(list.options || []).find(o => (o.value || "").trim());
+                        if (!opt) return false;
+                        el.value = opt.value;
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                        return true;
+                    }
+                    return false;
+                }""",
+                selector,
+            )
+            return bool(ok)
+        except Exception:
+            return False
+
     endereconumero = _normalizar_numero(endereconumero)
 
     page.wait_for_selector('a[href="#menu1"]', timeout=TIMEOUT)
@@ -901,10 +961,13 @@ def preencher_endereco(page, funcionario: dict) -> None:
         campo_bairro.type(bairro_rm, delay=50)
         logger.info(f"Bairro preenchido via RM: {bairro_rm}", details={"bairro": bairro_rm})
     elif fallback_usado and not bairro_metax:
-        campo_bairro.click()
-        campo_bairro.fill("")
-        campo_bairro.type(BAIRRO_FALLBACK, delay=50)
-        logger.warn(f"Fallback usado: Bairro preenchido com padrao '{BAIRRO_FALLBACK}'.")
+        if _selecionar_primeira_opcao("#nomeBairro"):
+            logger.warn("Fallback usado: Bairro selecionado pela primeira opcao disponivel.")
+        else:
+            campo_bairro.click()
+            campo_bairro.fill("")
+            campo_bairro.type(BAIRRO_FALLBACK, delay=50)
+            logger.warn(f"Fallback usado: Bairro preenchido com padrao '{BAIRRO_FALLBACK}'.")
 
     # LOGRADOURO
     fechar_modais_bloqueantes(page)
@@ -919,10 +982,13 @@ def preencher_endereco(page, funcionario: dict) -> None:
         campo_logradouro.type(rua_rm, delay=50)
         logger.info(f"Logradouro preenchido via RM: {rua_rm}", details={"logradouro": rua_rm})
     elif fallback_usado and not logradouro_metax:
-        campo_logradouro.click()
-        campo_logradouro.fill("")
-        campo_logradouro.type(LOGRADOURO_FALLBACK, delay=50)
-        logger.warn(f"Fallback usado: Logradouro preenchido com padrao '{LOGRADOURO_FALLBACK}'.")
+        if _selecionar_primeira_opcao("#comboLogradouro"):
+            logger.warn("Fallback usado: Logradouro selecionado pela primeira opcao disponivel.")
+        else:
+            campo_logradouro.click()
+            campo_logradouro.fill("")
+            campo_logradouro.type(LOGRADOURO_FALLBACK, delay=50)
+            logger.warn(f"Fallback usado: Logradouro preenchido com padrao '{LOGRADOURO_FALLBACK}'.")
 
     if fallback_usado and endereconumero == "0":
         endereconumero = "1"

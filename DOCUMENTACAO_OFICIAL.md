@@ -11,8 +11,8 @@ MetaXg e um robo RPA para integracao entre RM Labore e portal MetaX, com padrao 
 1. Execucao direta do app (`main.py`) em ambiente Python.
 2. Execucao via Runner (`runner.py`), com update automatico e fallback GitHub.
 
-## Estrutura de pastas na rede (hub)
-Base: `P:\ProcessoMetaX`
+## Estrutura de pastas (hub)
+Base: `PUBLIC_BASE_DIR` (default `P:\ProcessoMetaX` se existir, senao usa o diretório do projeto)
 
 Pastas operacionais:
 - `Codigo\`
@@ -42,26 +42,26 @@ Padrao adicional (em `logs\`):
 - `metax_last_run.log` (runner)
 
 Rede:
-Os mesmos artefatos sao gravados em `P:\ProcessoMetaX\07_LOGS`, `08_RELATORIOS`, `09_JSON`, `10_SCREENSHOTS` (padrao legado por data) e em alias `P:\ProcessoMetaX\logs`, `relatorios`, `json`, `logs\screenshots`.
+Os mesmos artefatos sao gravados em `PUBLIC_BASE_DIR\07_LOGS`, `08_RELATORIOS`, `09_JSON`, `10_SCREENSHOTS` (padrao legado por data) e em alias `PUBLIC_BASE_DIR\logs`, `relatorios`, `json`, `logs\screenshots`.
 
 Fotos (pipeline):
-- Entrada e processamento: `P:\ProcessoMetaX\em processamento`
-- Concluidas/ok: `P:\ProcessoMetaX\processados`
-- Com erro: `P:\ProcessoMetaX\erros`
+- Entrada e processamento: `PUBLIC_BASE_DIR\em processamento`
+- Concluidas/ok: `PUBLIC_BASE_DIR\processados`
+- Com erro: `PUBLIC_BASE_DIR\erros`
 - Observacao: fotos em `processados` e `erros` ficam em subpastas por data (YYYY-MM-DD).
 
 ## Runner: atualizacao segura
 Fluxo:
-1. Le `version.txt` em `C:\MetaXg`.
-2. Busca `latest.json` em `P:\ProcessoMetaX\releases`.
+1. Le `version.txt` em `install_dir` (config.json).
+2. Busca `latest.json` em `network_release_dir` (config.json).
 3. Se falhar, usa GitHub Releases.
 4. Valida SHA256.
 5. Extrai em staging e faz swap com backup.
-6. Executa o exe dentro de `C:\MetaXg\app\current`.
+6. Executa o exe dentro de `install_dir\app\current`.
 
 Rollback:
 - Automatico se falhar apos mover `current`.
-- Backup mantido em `C:\MetaXg\app\backup`.
+- Backup mantido em `install_dir\app\backup`.
 
 Schema do latest.json (ASO):
 ```json
@@ -87,7 +87,7 @@ Config (runner):
    - `build_windows.bat`
 2. Gerar zip + sha256 + latest.json:
    - `build_zip.bat -Bump patch`
-3. Publicar em `P:\ProcessoMetaX\releases`:
+3. Publicar em `network_release_dir`:
 - `MetaXg_<versao>.zip`
 - `MetaXg_<versao>.sha256`
 - `latest.json`

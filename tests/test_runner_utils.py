@@ -113,11 +113,11 @@ def test_load_runner_config_github_optional(tmp_path):
         json.dumps(
             {
                 "app_name": "MetaXg",
-                "install_dir": "C:\\MetaXg",
-                "network_release_dir": "P:\\ProcessoMetaX\\releases",
-                "network_latest_json": "P:\\ProcessoMetaX\\releases\\latest.json",
+                "install_dir": "install",
+                "network_release_dir": "releases",
+                "network_latest_json": "releases\\latest.json",
                 "exe_name": "MetaXg.exe",
-                "log_file": "C:\\MetaXg\\logs\\metax_last_run.log",
+                "log_file": "logs\\metax_last_run.log",
             }
         ),
         encoding="utf-8",

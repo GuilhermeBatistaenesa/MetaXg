@@ -4,10 +4,18 @@ param(
     [string]$Bump = "patch",
     [string]$AppName = "MetaXg",
     [string]$DistDir = "dist",
-    [string]$ReleaseDir = "P:\\ProcessoMetaX\\releases"
+    [string]$ReleaseDir = ""
 )
 
 $ErrorActionPreference = "Stop"
+
+if (-not $ReleaseDir) {
+    if ($env:METAX_RELEASE_DIR) {
+        $ReleaseDir = $env:METAX_RELEASE_DIR
+    } else {
+        $ReleaseDir = "releases"
+    }
+}
 
 function Parse-Version([string]$v) {
     if ($v -notmatch "^\d+\.\d+\.\d+$") {
