@@ -12,8 +12,8 @@ from utils import (
     formatar_pis, formatar_cpf
 )
 from mappings import (
-    MAPA_CARGOS_METAX, MAPA_ESCOLARIDADE, MAPA_ESTADO_CIVIL, 
-    MAPA_SEXO, MAPA_ESTADO_NATAL
+    MAPA_CARGOS_METAX, MAPA_CARGOS_CODFUNCAO_METAX, MAPA_ESCOLARIDADE, MAPA_ESTADO_CIVIL,
+    MAPA_SEXO, MAPA_ESTADO_NATAL, MAPA_CARGOS_OVERRIDE_POR_CONTRATO
 )
 
 
@@ -68,19 +68,86 @@ def anexar_foto(page, caminho_foto: str) -> None:
 def fechar_modais_bloqueantes(page):
     """Tenta fechar modais do Bootbox que estejam bloqueando a tela."""
     try:
-        # Verifica se tem algum modal visível
-        if page.locator("div.bootbox.modal").is_visible():
-            logger.warn("Modal bloqueante detectado. FORÇANDO REMOÇÃO...")
-            
-            # Força bruta: Remove do DOM qualquer modal bootbox e o backdrop
-            page.evaluate("""
-                document.querySelectorAll('.bootbox.modal').forEach(e => e.remove());
-                document.querySelectorAll('.modal-backdrop').forEach(e => e.remove());
-                document.body.classList.remove('modal-open');
-            """)
-            page.wait_for_timeout(500)
-    except:
+        modais_visiveis = page.locator("div.bootbox.modal:visible").count()
+        if modais_visiveis > 0:
+            textos = []
+            try:
+                textos = [t for t in page.locator("div.bootbox-body").all_inner_texts() if t.strip()]
+            except Exception:
+                textos = []
+            logger.warn("Modal bloqueante detectado. FORCANDO REMOCAO...", details={"modais": textos})
+
+            # Tenta clicar no OK antes de remover
+            try:
+                btn_ok = page.locator("div.bootbox.modal:visible button[data-bb-handler='ok']")
+                if btn_ok.count() > 0:
+                    btn_ok.first.click()
+            except Exception:
+                pass
+
+        # Forca bruta: remove do DOM qualquer modal bootbox e o backdrop
+        page.evaluate("""
+            document.querySelectorAll('.bootbox.modal').forEach(e => e.remove());
+            document.querySelectorAll('.modal-backdrop').forEach(e => e.remove());
+            document.body.classList.remove('modal-open');
+        """)
+        page.wait_for_timeout(300)
+    except Exception:
         pass
+
+
+def selecionar_opcao_select(page, selector: str, value: str | None = None, label: str | None = None) -> bool:
+    """
+    Tenta selecionar uma opcao de um SELECT usando value ou label.
+    Faz fallback por matching normalizado (sem acento / case-insensitive).
+    """
+    def _try_value(val: str) -> bool:
+        try:
+            page.select_option(selector, value=val)
+            return True
+        except Exception:
+            return False
+
+    def _try_label(lab: str) -> bool:
+        try:
+            page.select_option(selector, label=lab)
+            return True
+        except Exception:
+            return False
+
+    if value and _try_value(value):
+        return True
+    if label and _try_label(label):
+        return True
+
+    alvo = label or value
+    if not alvo:
+        return False
+
+    try:
+        ok = page.evaluate(
+            """(sel, alvo) => {
+                const norm = (s) => (s || '').normalize('NFD').replace(/\\p{Diacritic}/gu, '').toUpperCase().trim();
+                const el = document.querySelector(sel);
+                if (!el || !el.options) return false;
+                const target = norm(alvo);
+                let opt = Array.from(el.options).find(o => norm(o.textContent || '') === target);
+                if (!opt) {
+                    opt = Array.from(el.options).find(o => norm(o.value || '') === target);
+                }
+                if (!opt) return false;
+                el.value = opt.value;
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                return true;
+            }""",
+            selector,
+            alvo,
+        )
+        return bool(ok)
+    except Exception:
+        return False
+
 
 def selecionar_cargo_por_descricao(page, descricao_cargo: str) -> bool:
     """
@@ -127,14 +194,28 @@ def selecionar_cargo_por_descricao(page, descricao_cargo: str) -> bool:
     if palavras_chave:
         primeira_palavra = palavras_chave[0] # Ex: MOTORISTA
         if len(primeira_palavra) > 3: # Evita matching de "DE", "DA"
+            matches = []
             for i in range(opcoes.count()):
                 texto_opcao = opcoes.nth(i).inner_text().upper()
                 if primeira_palavra in texto_opcao:
-                     valor = opcoes.nth(i).get_attribute("value")
-                     page.select_option("#cargo", value=valor)
-                     page.locator("#cargo").press("Tab")
-                     logger.info(f"Cargo selecionado (Match Palavra-Chave '{primeira_palavra}'): {texto_opcao}", details={"alvo": descricao_cargo, "selecionado": texto_opcao})
-                     return True
+                    valor = opcoes.nth(i).get_attribute("value")
+                    if valor:
+                        matches.append((valor, texto_opcao))
+            # Evita selecionar cargo errado quando ha mais de uma opcao com mesma palavra-chave.
+            if len(matches) == 1:
+                valor, texto_opcao = matches[0]
+                page.select_option("#cargo", value=valor)
+                page.locator("#cargo").press("Tab")
+                logger.info(
+                    f"Cargo selecionado (Match Palavra-Chave '{primeira_palavra}'): {texto_opcao}",
+                    details={"alvo": descricao_cargo, "selecionado": texto_opcao},
+                )
+                return True
+            if len(matches) > 1:
+                logger.warn(
+                    f"Match por palavra-chave ambiguo para cargo '{descricao_cargo}'.",
+                    details={"palavra_chave": primeira_palavra, "matches": [m[1] for m in matches]},
+                )
              
     # 2. Logar opções disponíveis para debug
     lista_opcoes = []
@@ -148,6 +229,13 @@ def selecionar_cargo_por_descricao(page, descricao_cargo: str) -> bool:
     logger.warn(f"Cargo '{descricao_cargo}' não encontrado. Opções disponíveis: [{opcoes_str}]", details={"opcoes": lista_opcoes})
 
     return False
+
+
+def _aplicar_override_contrato(descricao: str, contrato_chave: str | None) -> str:
+    if not contrato_chave:
+        return descricao
+    override_map = MAPA_CARGOS_OVERRIDE_POR_CONTRATO.get(contrato_chave, {})
+    return override_map.get(descricao, descricao)
 
 
 # ==============================================================================
@@ -517,9 +605,18 @@ def preencher_dados_pessoais(page, funcionario: dict) -> None:
 
     if valor_escolaridade:
         page.wait_for_selector('#escolaridade', timeout=TIMEOUT)
-        page.select_option('#escolaridade', value=valor_escolaridade)
+        if not selecionar_opcao_select(page, '#escolaridade', value=valor_escolaridade, label=valor_escolaridade):
+            logger.warn(
+                "Escolaridade nao encontrada no combo do MetaX.",
+                details={"codigo_rm": codigo_rm, "valor": valor_escolaridade},
+            )
+            if selecionar_opcao_select(page, '#escolaridade', value="Outros", label="Outros"):
+                logger.warn("Fallback de escolaridade aplicado: Outros.", details={"codigo_rm": codigo_rm})
     else:
         logger.warn(f"Escolaridade não mapeada: {codigo_rm}", details={"codigo_rm": codigo_rm})
+        page.wait_for_selector('#escolaridade', timeout=TIMEOUT)
+        if selecionar_opcao_select(page, '#escolaridade', value="Outros", label="Outros"):
+            logger.warn("Fallback de escolaridade aplicado para codigo nao mapeado.", details={"codigo_rm": codigo_rm})
 
     # ESTADO CIVIL
     codigo_ec = funcionario.get("ESTADOCIVIL")
@@ -530,7 +627,11 @@ def preencher_dados_pessoais(page, funcionario: dict) -> None:
 
     if valor_est_civil:
         page.wait_for_selector('#estCivil', timeout=TIMEOUT)
-        page.select_option('#estCivil', value=valor_est_civil)
+        if not selecionar_opcao_select(page, '#estCivil', value=valor_est_civil, label=valor_est_civil):
+            logger.warn(
+                "Estado civil nao encontrado no combo do MetaX.",
+                details={"codigo_rm": codigo_ec, "valor": valor_est_civil},
+            )
     else:
         logger.warn(f"Estado civil não mapeado: {codigo_ec}", details={"codigo_ec": codigo_ec})
 
@@ -642,7 +743,11 @@ def preencher_dados_pessoais(page, funcionario: dict) -> None:
 
     if valor_sexo:
         page.wait_for_selector('#sexo', timeout=TIMEOUT)
-        page.select_option('#sexo', value=valor_sexo)
+        if not selecionar_opcao_select(page, '#sexo', value=valor_sexo, label=valor_sexo):
+            logger.warn(
+                "Sexo nao encontrado no combo do MetaX.",
+                details={"codigo_rm": sexo_rm, "valor": valor_sexo},
+            )
     else:
         logger.warn(f"Sexo inválido ou não mapeado: {sexo_rm}", details={"sexo": sexo_rm})
 
@@ -778,40 +883,151 @@ def preencher_endereco(page, funcionario: dict) -> None:
         digits = digits.lstrip("0") or "0"
         return digits
 
-    def _selecionar_primeira_opcao(selector: str) -> bool:
+    def _valor_invalido(valor: str) -> bool:
+        valor_norm = normalizar_texto(valor)
+        if not valor_norm:
+            return True
+        return valor_norm in {
+            "0",
+            "SELECIONE",
+            "SELECIONE...",
+            "SELECIONAR",
+            "SELECIONE UM",
+            "SELECIONE O BAIRRO",
+            "SELECIONE O LOGRADOURO",
+        }
+
+    def _set_campo_endereco(selector: str, valor: str, allow_first: bool = True) -> dict:
         try:
-            ok = page.evaluate(
-                """(sel) => {
+            return page.evaluate(
+                """(sel, val, allowFirst) => {
+                    const norm = (s) => (s || '').toUpperCase().trim();
+
                     const el = document.querySelector(sel);
-                    if (!el) return false;
-                    const tag = (el.tagName || "").toUpperCase();
-                    if (tag === "SELECT") {
-                        const opts = Array.from(el.options || []);
-                        const opt = opts.find(o => (o.value || "").trim() && (o.value || "") !== "0");
-                        if (!opt) return false;
+                    if (!el) return { ok: false, reason: 'not_found' };
+
+                    el.removeAttribute('readonly');
+                    el.removeAttribute('disabled');
+                    if (el.readOnly) el.readOnly = false;
+                    if (el.disabled) el.disabled = false;
+
+                    const desired = norm(val);
+
+                    const pickFirst = (options) => {
+                        const opt = (options || []).find(o => {
+                            const v = (o.value || '').trim();
+                            return v && v !== '0';
+                        });
+                        return opt || null;
+                    };
+
+                    if ((el.tagName || '').toUpperCase() === 'SELECT') {
+                        let opt = null;
+                        if (val) {
+                            opt = Array.from(el.options || []).find(o => {
+                                return norm(o.textContent || '') === desired || norm(o.value || '') === desired;
+                            });
+                        }
+                        if (!opt && allowFirst) opt = pickFirst(Array.from(el.options || []));
+                        if (!opt) return { ok: false, reason: 'no_option' };
                         el.value = opt.value;
                         el.dispatchEvent(new Event('change', { bubbles: true }));
                         el.dispatchEvent(new Event('input', { bubbles: true }));
-                        return true;
+                        return { ok: true, selected: (opt.textContent || opt.value || '').trim() };
                     }
-                    const listId = el.getAttribute("list");
+
+                    const listId = el.getAttribute('list');
                     if (listId) {
                         const list = document.getElementById(listId);
-                        if (!list) return false;
-                        const opt = Array.from(list.options || []).find(o => (o.value || "").trim());
-                        if (!opt) return false;
-                        el.value = opt.value;
+                        if (list) {
+                            let opt = null;
+                            if (val) {
+                                opt = Array.from(list.options || []).find(o => norm(o.value || '') === desired);
+                            }
+                            if (!opt && allowFirst) opt = (list.options || []).length ? list.options[0] : null;
+                            if (opt) {
+                                el.value = opt.value || opt.textContent || '';
+                                el.dispatchEvent(new Event('input', { bubbles: true }));
+                                el.dispatchEvent(new Event('change', { bubbles: true }));
+                                return { ok: true, selected: (opt.value || opt.textContent || '').trim() };
+                            }
+                        }
+                    }
+
+                    if (val) {
+                        el.value = val;
                         el.dispatchEvent(new Event('input', { bubbles: true }));
                         el.dispatchEvent(new Event('change', { bubbles: true }));
-                        return true;
+                        return { ok: true, selected: val };
                     }
-                    return false;
+
+                    return { ok: false, reason: 'no_value' };
                 }""",
                 selector,
+                valor,
+                allow_first,
             )
-            return bool(ok)
+        except Exception:
+            return {"ok": False}
+
+    
+
+    def _snapshot_endereco(stage: str) -> dict:
+        try:
+            snap = page.evaluate(
+                """() => {
+                    const info = (el) => {
+                        if (!el) return { value: "", tag: "", options: 0, disabled: false, readonly: false };
+                        let options = 0;
+                        if ((el.tagName || '').toUpperCase() === 'SELECT') {
+                            options = (el.options || []).length;
+                        } else {
+                            const listId = el.getAttribute('list');
+                            if (listId) {
+                                const list = document.getElementById(listId);
+                                if (list && list.options) options = list.options.length;
+                            }
+                        }
+                        return {
+                            value: (el.value || '').trim(),
+                            tag: (el.tagName || '').toUpperCase(),
+                            options,
+                            disabled: !!el.disabled,
+                            readonly: !!el.readOnly,
+                        };
+                    };
+
+                    const cidadeEl =
+                        document.querySelector('#comboCidade') ||
+                        document.querySelector('select[id*="Cidade"], input[id*="Cidade"], select[name*="Cidade"], input[name*="Cidade"]');
+
+                    return {
+                        cep: (document.querySelector('#CEP')?.value || '').trim(),
+                        bairro: info(document.querySelector('#nomeBairro')),
+                        logradouro: info(document.querySelector('#comboLogradouro')),
+                        estado: info(document.querySelector('#comboEstado')),
+                        cidade: info(cidadeEl),
+                        numero: info(document.querySelector('#numero')),
+                    };
+                }"""
+            )
+        except Exception:
+            snap = {}
+
+        snap["stage"] = stage
+        return snap
+
+    def _campo_ok(info: dict) -> bool:
+        try:
+            valor = (info or {}).get("value", "")
+            if not _valor_invalido(valor):
+                return True
+            return (info or {}).get("options", 0) > 1
         except Exception:
             return False
+
+    def _cep_parece_valido(snap: dict) -> bool:
+        return _campo_ok(snap.get("logradouro", {}))
 
     endereconumero = _normalizar_numero(endereconumero)
 
@@ -819,12 +1035,14 @@ def preencher_endereco(page, funcionario: dict) -> None:
     page.click('a[href="#menu1"]')
 
     def preencher_e_buscar_cep(cep_tentativa):
-        # Normaliza CEP para 8 digitos (com ou sem hifen)
+        # Normaliza CEP para 8 digitos (sem hifen)
         cep_digits = "".join([c for c in str(cep_tentativa) if c.isdigit()])
         if len(cep_digits) == 8:
             cep_formatado = f"{cep_digits[:5]}-{cep_digits[5:]}"
+            cep_input = cep_digits
         else:
             cep_formatado = str(cep_tentativa)
+            cep_input = cep_digits or cep_formatado
 
         # Forca setar valor via JS (campo pode estar readonly/disabled)
         page.evaluate(
@@ -837,7 +1055,7 @@ def preencher_endereco(page, funcionario: dict) -> None:
                 el.dispatchEvent(new Event('input', { bubbles: true }));
                 el.dispatchEvent(new Event('change', { bubbles: true }));
             }""",
-            cep_formatado,
+            cep_input,
         )
 
         # Tentativa adicional de digitar (alguns formularios so atualizam com input real)
@@ -845,7 +1063,8 @@ def preencher_endereco(page, funcionario: dict) -> None:
             campo = page.locator("#CEP")
             campo.click(force=True)
             campo.press("Control+A")
-            campo.type(cep_formatado, delay=20)
+            campo.press("Backspace")
+            campo.type(str(cep_input), delay=20)
         except Exception:
             pass
         
@@ -861,15 +1080,98 @@ def preencher_endereco(page, funcionario: dict) -> None:
              # Fallback via JS se o click falhar
              page.evaluate("document.getElementById('btnPesquisarCep').click()")
 
-        page.wait_for_timeout(3000) 
+        # Se o portal retornar modal de erro imediatamente, nao faz espera longa
+        try:
+            page.wait_for_timeout(800)
+            modal = page.locator("div.bootbox.modal:visible")
+            if modal.count() > 0:
+                textos = []
+                try:
+                    textos = [t for t in page.locator("div.bootbox-body").all_inner_texts() if t.strip()]
+                except Exception:
+                    textos = []
+                logger.warn("CEP: erro imediato no portal", details={"cep": cep_formatado, "modal": " | ".join(textos)})
+                try:
+                    btn_ok = page.locator("div.bootbox.modal:visible button[data-bb-handler='ok']")
+                    if btn_ok.count() > 0:
+                        btn_ok.first.click()
+                    else:
+                        page.locator("div.bootbox.modal:visible button").first.click()
+                except Exception:
+                    page.evaluate("if(document.querySelector('.bootbox.modal.in')) $('.bootbox.modal.in').modal('hide');")
+                return
+        except Exception:
+            pass
+
+        page.wait_for_timeout(3000)
+
+        for tentativa in range(2):
+            try:
+                page.wait_for_function("""() => {
+                    const val = (el) => (el && (el.value || '')).trim();
+                    const norm = (s) => (s || '').toUpperCase().trim();
+                    const valid = (s) => s && s !== '0' && s !== 'SELECIONE' && s !== 'SELECIONE...';
+
+                    const bairro = document.querySelector('#nomeBairro');
+                    const logradouro = document.querySelector('#comboLogradouro');
+
+                    const cidadeSel = document.querySelector('#comboCidade') ||
+                        document.querySelector('select[id*="Cidade"], select[name*="Cidade"]');
+
+                    const selectOk = (el) => el && (el.tagName || '').toUpperCase() === 'SELECT' && (el.options || []).length > 1;
+
+                    const bairroOk = selectOk(bairro) || (bairro && !bairro.disabled && !bairro.readOnly && valid(norm(val(bairro))));
+                    const logOk = selectOk(logradouro) || (logradouro && !logradouro.disabled && !logradouro.readOnly && valid(norm(val(logradouro))));
+                    const cidadeOk = cidadeSel && (cidadeSel.options || []).length > 1;
+
+                    return bairroOk || logOk || cidadeOk;
+                }""", timeout=20000)
+                break
+            except Exception as e:
+                if tentativa == 0:
+                    logger.warn(
+                        "CEP: resposta lenta, tentando novamente",
+                        details={"cep": cep_formatado, "error": str(e)},
+                    )
+                    try:
+                        page.locator("#btnPesquisarCep").click(force=True)
+                    except Exception:
+                        page.evaluate("document.getElementById('btnPesquisarCep').click()")
+                    page.wait_for_timeout(1500)
+                    continue
+                logger.warn("CEP: resposta nao carregou a tempo", details={"cep": cep_formatado, "error": str(e)})
 
     preencher_e_buscar_cep(cep)
 
     # Verifica se o bairro foi preenchido
-    bairro_preenchido = page.input_value("#nomeBairro").strip()
+    bairro_preenchido = ""
+    try:
+        bairro_preenchido = page.input_value("#nomeBairro").strip()
+    except Exception:
+        bairro_preenchido = ""
     fallback_usado = False
 
-    if not bairro_preenchido:
+    snap_cep = _snapshot_endereco("apos_busca_cep")
+    logger.info("Endereco snapshot apos CEP", details=snap_cep)
+
+    # Dados RM para complementar endereco
+    bairro_rm = funcionario.get("BAIRRO", "").strip().upper()
+    rua_rm = funcionario.get("RUA", "").strip().upper()
+
+    # Se logradouro vier invalido, tenta ajustar via RM antes do fallback
+    if not _campo_ok(snap_cep.get("logradouro", {})) and rua_rm:
+        result = _set_campo_endereco("#comboLogradouro", rua_rm, allow_first=True)
+        if result.get("ok"):
+            logger.info("Logradouro ajustado via RM (pre-fallback)", details={"logradouro": result.get("selected", rua_rm)})
+        snap_cep = _snapshot_endereco("apos_logradouro_rm")
+
+    if not _campo_ok(snap_cep.get("bairro", {})) and bairro_rm:
+        result = _set_campo_endereco("#nomeBairro", bairro_rm, allow_first=True)
+        if result.get("ok"):
+            logger.info("Bairro ajustado via RM (pre-fallback)", details={"bairro": result.get("selected", bairro_rm)})
+        snap_cep = _snapshot_endereco("apos_bairro_rm")
+
+    if not _cep_parece_valido(snap_cep):
         logger.warn(f"CEP {cep} não encontrou endereço. Tentando fallback...", details={"cep": cep})
 
         # Fallback fixo (orientacao MetaX)
@@ -877,9 +1179,10 @@ def preencher_endereco(page, funcionario: dict) -> None:
              
         fallback_usado = True
 
-    # FALLBACK ENDEREÇO
-    bairro_rm = funcionario.get("BAIRRO", "").strip().upper()
-    rua_rm = funcionario.get("RUA", "").strip().upper()
+        snap_fallback = _snapshot_endereco("apos_fallback_cep")
+        logger.info("Endereco snapshot apos fallback CEP", details=snap_fallback)
+
+    # FALLBACK ENDERECO
 
     # ESTADO
     fechar_modais_bloqueantes(page)
@@ -950,45 +1253,67 @@ def preencher_endereco(page, funcionario: dict) -> None:
 
     # BAIRRO
     fechar_modais_bloqueantes(page)
-    campo_bairro = page.locator("#nomeBairro")
-    campo_bairro.wait_for(state="visible", timeout=TIMEOUT)
-    page.evaluate("document.querySelector('#nomeBairro').disabled = false")
-    bairro_metax = campo_bairro.input_value().strip()
+    page.wait_for_selector("#nomeBairro", state="visible", timeout=TIMEOUT)
+    bairro_metax = ""
+    try:
+        bairro_metax = page.input_value("#nomeBairro").strip()
+    except Exception:
+        bairro_metax = ""
 
-    if (not fallback_usado) and (not bairro_metax) and bairro_rm:
-        campo_bairro.click()
-        campo_bairro.fill("")
-        campo_bairro.type(bairro_rm, delay=50)
-        logger.info(f"Bairro preenchido via RM: {bairro_rm}", details={"bairro": bairro_rm})
-    elif fallback_usado and not bairro_metax:
-        if _selecionar_primeira_opcao("#nomeBairro"):
-            logger.warn("Fallback usado: Bairro selecionado pela primeira opcao disponivel.")
+    if _valor_invalido(bairro_metax):
+        if (not fallback_usado) and bairro_rm:
+            result = _set_campo_endereco("#nomeBairro", bairro_rm, allow_first=True)
+            if result.get("ok"):
+                logger.info(
+                    f"Bairro ajustado via RM: {bairro_rm}",
+                    details={"bairro": result.get("selected", bairro_rm)},
+                )
+            else:
+                result = _set_campo_endereco("#nomeBairro", "", allow_first=True)
+                if result.get("ok"):
+                    logger.warn("Bairro ajustado pela primeira opcao disponivel.")
+                else:
+                    _set_campo_endereco("#nomeBairro", BAIRRO_FALLBACK, allow_first=False)
+                    logger.warn(f"Bairro preenchido com padrao '{BAIRRO_FALLBACK}'.")
         else:
-            campo_bairro.click()
-            campo_bairro.fill("")
-            campo_bairro.type(BAIRRO_FALLBACK, delay=50)
-            logger.warn(f"Fallback usado: Bairro preenchido com padrao '{BAIRRO_FALLBACK}'.")
+            result = _set_campo_endereco("#nomeBairro", "", allow_first=True)
+            if result.get("ok"):
+                logger.warn("Fallback usado: Bairro selecionado pela primeira opcao disponivel.")
+            else:
+                _set_campo_endereco("#nomeBairro", BAIRRO_FALLBACK, allow_first=False)
+                logger.warn(f"Fallback usado: Bairro preenchido com padrao '{BAIRRO_FALLBACK}'.")
 
     # LOGRADOURO
     fechar_modais_bloqueantes(page)
-    campo_logradouro = page.locator("#comboLogradouro")
-    campo_logradouro.wait_for(state="visible", timeout=TIMEOUT)
-    page.evaluate("document.querySelector('#comboLogradouro').disabled = false")
-    logradouro_metax = campo_logradouro.input_value().strip()
+    page.wait_for_selector("#comboLogradouro", state="visible", timeout=TIMEOUT)
+    logradouro_metax = ""
+    try:
+        logradouro_metax = page.input_value("#comboLogradouro").strip()
+    except Exception:
+        logradouro_metax = ""
 
-    if (not fallback_usado) and (not logradouro_metax) and rua_rm:
-        campo_logradouro.click()
-        campo_logradouro.fill("")
-        campo_logradouro.type(rua_rm, delay=50)
-        logger.info(f"Logradouro preenchido via RM: {rua_rm}", details={"logradouro": rua_rm})
-    elif fallback_usado and not logradouro_metax:
-        if _selecionar_primeira_opcao("#comboLogradouro"):
-            logger.warn("Fallback usado: Logradouro selecionado pela primeira opcao disponivel.")
+    if _valor_invalido(logradouro_metax):
+        if (not fallback_usado) and rua_rm:
+            result = _set_campo_endereco("#comboLogradouro", rua_rm, allow_first=True)
+            if result.get("ok"):
+                logger.info(
+                    f"Logradouro ajustado via RM: {rua_rm}",
+                    details={"logradouro": result.get("selected", rua_rm)},
+                )
+            else:
+                result = _set_campo_endereco("#comboLogradouro", "", allow_first=True)
+                if result.get("ok"):
+                    logger.warn("Logradouro ajustado pela primeira opcao disponivel.")
+                else:
+                    _set_campo_endereco("#comboLogradouro", LOGRADOURO_FALLBACK, allow_first=False)
+                    logger.warn(f"Logradouro preenchido com padrao '{LOGRADOURO_FALLBACK}'.")
         else:
-            campo_logradouro.click()
-            campo_logradouro.fill("")
-            campo_logradouro.type(LOGRADOURO_FALLBACK, delay=50)
-            logger.warn(f"Fallback usado: Logradouro preenchido com padrao '{LOGRADOURO_FALLBACK}'.")
+            result = _set_campo_endereco("#comboLogradouro", "", allow_first=True)
+            if result.get("ok"):
+                logger.warn("Fallback usado: Logradouro selecionado pela primeira opcao disponivel.")
+            else:
+                _set_campo_endereco("#comboLogradouro", LOGRADOURO_FALLBACK, allow_first=False)
+                logger.warn(f"Fallback usado: Logradouro preenchido com padrao '{LOGRADOURO_FALLBACK}'.")
 
     if fallback_usado and endereconumero == "0":
         endereconumero = "1"
@@ -1006,8 +1331,11 @@ def preencher_endereco(page, funcionario: dict) -> None:
 
     logger.info(f"Número do endereço preenchido: {endereconumero}", details={"numero": endereconumero})
 
+    snap_final = _snapshot_endereco("final_endereco")
+    logger.info("Endereco snapshot final", details=snap_final)
 
-def preencher_dados_profissionais(page, funcionario: dict) -> bool:
+
+def preencher_dados_profissionais(page, funcionario: dict, contrato_chave: str | None = None) -> bool:
     """Preenche dados profissionais (Cargo, Salário) e seleciona o cargo."""
     dataadmissao = funcionario.get("DATAADMISSAO", "")
     salario = funcionario.get("SALARIO", "")
@@ -1035,22 +1363,65 @@ def preencher_dados_profissionais(page, funcionario: dict) -> bool:
     page.select_option('#horMens', value='2')
 
     descricao_rm = funcionario["DESCRICAO_CARGO"].strip().upper()
-    logger.info(f"Tentando cargo RM: {descricao_rm}", details={"cargo": descricao_rm})
+    cod_funcao = (funcionario.get("CODFUNCAO") or "").strip().upper()
 
-    # 1. Tentativa
-    selecionado = selecionar_cargo_por_descricao(page, descricao_rm)
+    descricao_base = descricao_rm
+    if cod_funcao:
+        descricao_cod = MAPA_CARGOS_CODFUNCAO_METAX.get(cod_funcao)
+        if descricao_cod:
+            descricao_base = descricao_cod
+            logger.info("Tentando cargo por CODFUNCAO", details={"cod_funcao": cod_funcao, "cargo_metax": descricao_cod})
+        else:
+            logger.info("CODFUNCAO sem mapeamento; usando descricao RM", details={"cod_funcao": cod_funcao, "cargo_rm": descricao_rm})
+    else:
+        logger.info(f"Tentando cargo RM: {descricao_rm}", details={"cargo": descricao_rm})
 
-    # 2. Tentativa
+    # Monta candidatos de forma ordenada com override por contrato para lidar
+    # com diferencas entre catalogos de Mecanica e Eletromecanica.
+    candidatos = []
+
+    def _push_candidato(valor: str | None):
+        if not valor:
+            return
+        v = valor.strip().upper()
+        if not v:
+            return
+        v = _aplicar_override_contrato(v, contrato_chave)
+        if v not in candidatos:
+            candidatos.append(v)
+
+    _push_candidato(descricao_base)
+    _push_candidato(descricao_rm)
+    _push_candidato(ajustar_descricao_cargo(descricao_rm))
+    if descricao_rm in MAPA_CARGOS_METAX:
+        _push_candidato(MAPA_CARGOS_METAX[descricao_rm])
+
+    selecionado = False
+    for idx, candidato in enumerate(candidatos):
+        if idx == 0:
+            logger.info("Tentando cargo principal", details={"contrato": contrato_chave, "cargo": candidato})
+        else:
+            logger.info("Tentando cargo fallback", details={"contrato": contrato_chave, "cargo": candidato})
+        if selecionar_cargo_por_descricao(page, candidato):
+            selecionado = True
+            break
+
     if not selecionado:
-        descricao_ajustada = ajustar_descricao_cargo(descricao_rm)
-        if descricao_ajustada != descricao_rm:
-            logger.info(f"Tentando cargo ajustado MetaX: {descricao_ajustada}", details={"cargo_ajustado": descricao_ajustada})
-            selecionado = selecionar_cargo_por_descricao(page, descricao_ajustada)
-
-    if not selecionado:
-        logger.error(f"Cargo não encontrado no MetaX (RM/ajustado): {descricao_rm}", details={"cargo_rm": descricao_rm})
+        logger.error(
+            "Cargo nao encontrado no MetaX para o contrato atual.",
+            details={
+                "cargo_rm": descricao_rm,
+                "cod_funcao": cod_funcao,
+                "contrato": contrato_chave,
+                "candidatos_testados": candidatos,
+            },
+        )
+        logger.error(
+            f"Cargo nao encontrado no MetaX (RM/ajustado): {descricao_rm}",
+            details={"cargo_rm": descricao_rm, "cod_funcao": cod_funcao, "contrato": contrato_chave},
+        )
         return False
-    
+
     # FORÇAR BLUR
     page.locator("#cargo").press("Tab")
     page.wait_for_timeout(500)
@@ -1175,7 +1546,73 @@ def salvar_cadastro(page, cpf: str, output_manager: OutputManager) -> dict:
         return {"attempted": True, "saved": False, "error": str(e), "detail": ""}
 
 
-def cadastrar_funcionario(page, funcionario: dict, output_manager: OutputManager, caminho_foto: str = None) -> dict:
+def marcar_sem_foto_quando_disponivel(page) -> bool:
+    """
+    Tenta marcar opcao de "sem foto"/equivalente, caso exista no formulario.
+    Retorna True quando algum controle foi marcado.
+    """
+    try:
+        marcado = page.evaluate("""
+            () => {
+                const textosAlvo = ["sem foto", "nao possui foto", "foto nao", "sem imagem"];
+
+                const norm = (s) => (s || "")
+                    .normalize("NFD")
+                    .replace(/[\\u0300-\\u036f]/g, "")
+                    .toLowerCase();
+
+                const labels = Array.from(document.querySelectorAll("label"));
+                for (const label of labels) {
+                    const texto = norm(label.textContent || "");
+                    if (!textosAlvo.some(t => texto.includes(t))) continue;
+
+                    const forId = label.getAttribute("for");
+                    let target = forId ? document.getElementById(forId) : null;
+                    if (!target) target = label.querySelector("input[type='checkbox'], input[type='radio']");
+                    if (!target) continue;
+
+                    if (target.type === "checkbox" || target.type === "radio") {
+                        target.checked = true;
+                    }
+                    target.dispatchEvent(new Event("input", { bubbles: true }));
+                    target.dispatchEvent(new Event("change", { bubbles: true }));
+                    label.click();
+                    return true;
+                }
+
+                const candidatos = Array.from(
+                    document.querySelectorAll("input[type='checkbox'], input[type='radio']")
+                );
+                for (const input of candidatos) {
+                    const id = norm(input.id || "");
+                    const name = norm(input.name || "");
+                    if (
+                        id.includes("semfoto") || id.includes("sem_foto") || id.includes("nofoto") || id.includes("no_photo") ||
+                        name.includes("semfoto") || name.includes("sem_foto") || name.includes("nofoto") || name.includes("no_photo")
+                    ) {
+                        input.checked = true;
+                        input.dispatchEvent(new Event("input", { bubbles: true }));
+                        input.dispatchEvent(new Event("change", { bubbles: true }));
+                        return true;
+                    }
+                }
+
+                return false;
+            }
+        """)
+        return bool(marcado)
+    except Exception as e:
+        logger.warn("Falha ao tentar marcar opcao sem foto.", details={"error": str(e)})
+        return False
+
+
+def cadastrar_funcionario(
+    page,
+    funcionario: dict,
+    output_manager: OutputManager,
+    caminho_foto: str = None,
+    contrato_chave: str | None = None,
+) -> dict:
     """
     Funcao principal que orquestra todo o cadastro de um funcionario.
 
@@ -1206,11 +1643,20 @@ def cadastrar_funcionario(page, funcionario: dict, output_manager: OutputManager
     preencher_documentos(page, funcionario)
     preencher_endereco(page, funcionario)
 
-    sucesso_cargo = preencher_dados_profissionais(page, funcionario)
+    sucesso_cargo = preencher_dados_profissionais(page, funcionario, contrato_chave=contrato_chave)
     if not sucesso_cargo:
         return {"attempted": True, "saved": False, "no_photo": no_photo, "error": "Cargo nao encontrado no MetaX.", "detail": ""}
 
     resultado_salvar = salvar_cadastro(page, cpf, output_manager)
+    if no_photo and not resultado_salvar.get("saved"):
+        marcou_sem_foto = marcar_sem_foto_quando_disponivel(page)
+        if marcou_sem_foto:
+            logger.info(
+                "Opcao sem foto marcada. Retentando salvar rascunho.",
+                details={"cpf": cpf},
+            )
+            resultado_salvar = salvar_cadastro(page, cpf, output_manager)
+
     if not resultado_salvar.get("saved"):
         return {
             "attempted": True,
@@ -1330,8 +1776,11 @@ def _registrar_evidencia_verificacao(
 ):
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     filename = f"verify_fail_{cpf}_{timestamp}__{output_manager.execution_id}.png"
-    data = page.screenshot()
-    output_manager.save_screenshot_bytes(filename, data)
+    try:
+        data = page.screenshot(timeout=60000)
+        output_manager.save_screenshot_bytes(filename, data)
+    except Exception as e:
+        logger.warn("Falha ao gerar screenshot de verificacao", details={"erro": str(e)})
 
     debug = {
         "url": page.url,

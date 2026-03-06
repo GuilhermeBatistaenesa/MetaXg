@@ -115,7 +115,11 @@ def baixar_foto_funcionario(funcionario: dict, pasta_destino: str, pastas_busca:
         nome_arquivo = arq.name.upper()
         if nome_arquivo.startswith("00_FOTO_") and nome_arquivo.endswith((".JPG", ".JPEG", ".PNG")):
             os.makedirs(pasta_destino, exist_ok=True)
-            caminho_local = os.path.join(pasta_destino, arq.name)
+            # Inclui CPF no nome local para permitir reutilizacao por CPF em reexecucoes.
+            nome_local = arq.name
+            if cpf_limpo and cpf_limpo not in nome_local:
+                nome_local = f"{cpf_limpo}__{nome_local}"
+            caminho_local = os.path.join(pasta_destino, nome_local)
 
             with open(caminho_local, "wb") as f:
                 arq.download(f).execute_query()

@@ -90,8 +90,7 @@ class OutputManager:
     def _write_public_text(self, kind: str, filename: str, content: str, when: datetime):
         if not self.public_base_dir:
             return
-        self._write_public_text_for_base(self._public_base_dir, kind, filename, content, when, mark_error=True)
-        self._write_public_text_for_base(self._public_alias_base_dir, kind, filename, content, when, mark_error=False)
+        self._write_public_text_for_base(self._public_alias_base_dir, kind, filename, content, when, mark_error=True)
 
     def _write_public_text_for_base(
         self,
@@ -116,8 +115,7 @@ class OutputManager:
     def _append_public_text(self, kind: str, filename: str, content: str, when: datetime):
         if not self.public_base_dir:
             return
-        self._append_public_text_for_base(self._public_base_dir, kind, filename, content, when, mark_error=True)
-        self._append_public_text_for_base(self._public_alias_base_dir, kind, filename, content, when, mark_error=False)
+        self._append_public_text_for_base(self._public_alias_base_dir, kind, filename, content, when, mark_error=True)
 
     def _append_public_text_for_base(
         self,
@@ -144,8 +142,7 @@ class OutputManager:
     def _write_public_bytes(self, kind: str, filename: str, data: bytes, when: datetime):
         if not self.public_base_dir:
             return
-        self._write_public_bytes_for_base(self._public_base_dir, kind, filename, data, when, mark_error=True)
-        self._write_public_bytes_for_base(self._public_alias_base_dir, kind, filename, data, when, mark_error=False)
+        self._write_public_bytes_for_base(self._public_alias_base_dir, kind, filename, data, when, mark_error=True)
 
     def _write_public_bytes_for_base(
         self,

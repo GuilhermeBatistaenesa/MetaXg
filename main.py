@@ -22,7 +22,7 @@ from outcomes import (
     compute_totals,
 )
 from rpa_metax import iniciar_sessao, cadastrar_funcionario, obter_todos_rascunhos, verificar_cadastro
-from sharepoint import baixar_fotos_em_lote
+from sharepoint import baixar_foto_funcionario
 
 from config import (
     DB_DRIVER, DB_SERVER, DB_NAME, DB_USER, DB_PASSWORD, DIAS_RETROATIVOS,
@@ -760,11 +760,8 @@ def main():
 
         logger.info(f"Funcionarios a processar: {len(funcionarios)}", details={"total": len(funcionarios)})
 
-        fotos = baixar_fotos_em_lote(
-            funcionarios=funcionarios,
-            pasta_destino=FOTOS_EM_PROCESSAMENTO_DIR,
-            pastas_busca=FOTOS_BUSCA_DIRS,
-        )
+        # Download lazy por CPF: evita baixar foto de quem sera pulado por rascunho existente.
+        fotos_cache: dict[str, str | None] = {}
 
         grupos = {"MECANICA": [], "ELETROMECANICA": [], "DESCONHECIDO": []}
         for func in funcionarios:
@@ -789,7 +786,7 @@ def main():
                 cpf = func["CPF"]
                 cpf_limpo = "".join(filter(str.isdigit, str(cpf)))
                 nome = func["NOME"]
-                caminho_foto = fotos.get(cpf)
+                caminho_foto = None
                 centro_custo = func.get("CENTRO_CUSTO")
                 pessoa_started_at = datetime.now().isoformat()
                 registro = _criar_registro_base(nome, cpf_limpo, pessoa_started_at)
@@ -838,7 +835,7 @@ def main():
 
                     pessoa_started_at = datetime.now().isoformat()
                     registro = _criar_registro_base(nome, cpf_limpo, pessoa_started_at)
-                    caminho_foto = fotos.get(cpf)
+                    caminho_foto = fotos_cache.get(cpf_limpo)
 
                     if cpf_limpo in rascunhos_existentes:
                         logger.info(f"Funcionario {nome} ja consta nos rascunhos (CACHE). Pulando...", details={"cpf": cpf})
@@ -851,6 +848,22 @@ def main():
                         _classificar_foto_pos_processamento(caminho_foto, registro["status_final"], execution_id, started_at)
                         continue
 
+                    if cpf_limpo not in fotos_cache:
+                        try:
+                            fotos_cache[cpf_limpo] = baixar_foto_funcionario(
+                                func,
+                                pasta_destino=FOTOS_EM_PROCESSAMENTO_DIR,
+                                pastas_busca=FOTOS_BUSCA_DIRS,
+                            )
+                        except Exception as e:
+                            logger.error(
+                                f"Falha ao obter foto de {nome}: {e}",
+                                details={"error": str(e), "cpf": cpf},
+                            )
+                            fotos_cache[cpf_limpo] = None
+
+                    caminho_foto = fotos_cache.get(cpf_limpo)
+
                     if caminho_foto:
                         logger.info(f"Foto pronta para {nome}", details={"cpf": cpf, "foto": caminho_foto})
                     else:
@@ -860,7 +873,13 @@ def main():
                     logger.info(f"Iniciando cadastro de {nome} ({cpf})", details={"funcionario": nome, "cpf": cpf})
 
                     try:
-                        action = cadastrar_funcionario(page, func, output_manager, caminho_foto)
+                        action = cadastrar_funcionario(
+                            page,
+                            func,
+                            output_manager,
+                            caminho_foto,
+                            contrato_chave=chave,
+                        )
                     except Exception as e:
                         logger.error(f"Falha ao cadastrar {nome}: {e}", details={"cpf": cpf, "erro": str(e)})
                         registro["attempted"] = False
