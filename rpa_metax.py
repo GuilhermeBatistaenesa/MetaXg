@@ -65,6 +65,44 @@ def _preencher_campo_rapido(page, seletor: str, valor: str, timeout: int = TIMEO
         pass
 
 
+def _preencher_cpf_rapido(page, cpf_formatado: str):
+    _esperar_visivel(page, "#cpf", timeout=4000)
+    try:
+        page.evaluate(
+            """(valor) => {
+                const el = document.querySelector('#cpf');
+                if (!el) return;
+                el.removeAttribute('readonly');
+                el.removeAttribute('disabled');
+                el.value = valor;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                el.dispatchEvent(new Event('blur', { bubbles: true }));
+            }""",
+            cpf_formatado,
+        )
+    except Exception:
+        pass
+
+    try:
+        page.wait_for_function(
+            """(esperado) => {
+                const el = document.querySelector('#cpf');
+                if (!el) return false;
+                return String(el.value || '') === String(esperado || '');
+            }""",
+            cpf_formatado,
+            timeout=1200,
+        )
+    except Exception:
+        _preencher_campo_rapido(page, "#cpf", cpf_formatado, timeout=4000)
+
+    try:
+        page.locator("#cpf").press("Tab")
+    except Exception:
+        pass
+
+
 def _aguardar_combo_carregado(page, seletor: str, timeout: int = TIMEOUT_MEDIO) -> bool:
     try:
         page.wait_for_function(
@@ -763,8 +801,9 @@ def preencher_dados_pessoais(page, funcionario: dict) -> None:
     _preencher_campo_rapido(page, '#nomeMae', nome_mae)
 
     cpf_formatado = formatar_cpf(cpf)
-
-    _preencher_campo_rapido(page, '#cpf', cpf_formatado)
+    logger.info("Preenchendo CPF...")
+    _preencher_cpf_rapido(page, cpf_formatado)
+    logger.ok("CPF preenchido.")
 
     # ESCOLARIDADE
     codigo_rm = funcionario.get("GRAUINSTRUCAO")
@@ -837,7 +876,7 @@ def preencher_dados_pessoais(page, funcionario: dict) -> None:
         _esperar_visivel(page, '#cidNasc')
         logger.info("Aguardando carregamento de cidades...")
         try:
-            if not _aguardar_combo_carregado(page, '#cidNasc', timeout=TIMEOUT_MEDIO):
+            if not _aguardar_combo_carregado(page, '#cidNasc', timeout=4000):
                 raise PlaywrightTimeoutError("Combo de cidade de nascimento nao carregou a tempo.")
         except Exception as e:
             logger.warn(

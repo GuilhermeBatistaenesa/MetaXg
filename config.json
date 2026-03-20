@@ -1,8 +1,8 @@
 {
   "app_name": "MetaXg",
   "install_dir": ".\\\\_install",
-  "network_release_dir": ".\\\\releases",
-  "network_latest_json": ".\\\\releases\\\\latest.json",
+  "network_release_dir": "P:\\\\ProcessoMetaX\\\\releases",
+  "network_latest_json": "P:\\\\ProcessoMetaX\\\\releases\\\\latest.json",
   "github_repo": "GuilhermeBatistaenesa/MetaXg",
   "exe_name": "MetaXg.exe",
   "log_file": ".\\\\_install\\\\logs\\\\metax_last_run.log",

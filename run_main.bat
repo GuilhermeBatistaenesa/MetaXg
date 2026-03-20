@@ -4,7 +4,7 @@ title MetaXg - Executar
 
 rem ============================================================
 rem MetaXg runner - robusto para qualquer PC
-rem - Detecta Python real >= 3.10 com venv
+rem - Detecta Python real compativel (3.10 a 3.12) com venv
 rem - Venv por usuario (LOCALAPPDATA) para evitar conflitos
 rem - Instala dependencias automaticamente
 rem ============================================================
@@ -27,11 +27,13 @@ if not defined LOCALAPPDATA (
 )
 
 set "VENV_DIR=%RUN_MAIN_VENV_DIR%"
-if not defined VENV_DIR set "VENV_DIR=%LOCALAPPDATA%\MetaXg\.venv"
 
 set "EXIT_CODE=0"
-set "BASE_PY_CMD="
+set "BASE_PY_EXE="
+set "BASE_PY_LAUNCHER="
 set "PYTHON_EXE="
+set "BASE_PY_VERSION="
+set "INCOMPATIBLE_PYTHON="
 
 if defined DIAG (
   echo ===== RUN_MAIN_DIAG =====
@@ -52,14 +54,30 @@ rem ============================================================
 rem 1) Find base Python (>=3.10 AND has venv)
 rem ============================================================
 call :find_base_python
-
-if not defined BASE_PY_CMD (
+if not defined BASE_PY_EXE if not defined BASE_PY_LAUNCHER (
   echo(
-  echo Python nao encontrado. Requer versao 3.10+ e modulo venv.
-  echo Instale Python completo. Nao use Windows Store stub ou embeddable.
+  if defined INCOMPATIBLE_PYTHON (
+    echo Python encontrado, mas a versao nao eh compativel: %INCOMPATIBLE_PYTHON%
+    echo Este projeto usa Playwright 1.47, que falha ao instalar no Python 3.13.
+    echo Instale Python 3.12, 3.11 ou 3.10 completo ^(com venv^) e rode novamente.
+  ) else (
+    echo Python compativel nao encontrado. Requer versao 3.10 a 3.12 com modulo venv.
+    echo Instale Python completo. Nao use Windows Store stub ou embeddable.
+  )
   echo(
   set "EXIT_CODE=1"
   goto :end
+)
+
+if not defined VENV_DIR (
+  set "BASE_PY_TAG=%BASE_PY_VERSION:.=%"
+  set "VENV_DIR=%LOCALAPPDATA%\MetaXg\.venv-py%BASE_PY_TAG%"
+)
+
+if defined DIAG (
+  if defined BASE_PY_EXE echo Base python : "%BASE_PY_EXE%" ^(Python %BASE_PY_VERSION%^)
+  if defined BASE_PY_LAUNCHER echo Base python : %BASE_PY_LAUNCHER% ^(Python %BASE_PY_VERSION%^)
+  echo Venv dir    : "%VENV_DIR%"
 )
 
 if defined RECREATE_VENV (
@@ -72,13 +90,29 @@ rem 2) Create venv if missing
 rem ============================================================
 if not exist "%VENV_DIR%\Scripts\python.exe" (
   echo Criando venv em "%VENV_DIR%"...
-  call %BASE_PY_CMD% -m venv "%VENV_DIR%"
+  call :run_base_python -m venv "%VENV_DIR%"
   if not exist "%VENV_DIR%\Scripts\python.exe" (
     echo(
     echo Falha ao criar venv.
     echo.
     set "EXIT_CODE=1"
     goto :end
+  )
+)
+
+if exist "%VENV_DIR%\pyvenv.cfg" (
+  findstr /c:"version = %BASE_PY_VERSION%" "%VENV_DIR%\pyvenv.cfg" >nul 2>&1
+  if not "%ERRORLEVEL%"=="0" (
+    echo Venv criada com outra versao de Python. Recriando com Python %BASE_PY_VERSION%...
+    call :delete_venv
+    call :run_base_python -m venv "%VENV_DIR%"
+    if not exist "%VENV_DIR%\Scripts\python.exe" (
+      echo.
+      echo Falha ao recriar venv com Python %BASE_PY_VERSION%.
+      echo.
+      set "EXIT_CODE=1"
+      goto :end
+    )
   )
 )
 
@@ -91,7 +125,7 @@ rem ============================================================
 if not "%ERRORLEVEL%"=="0" (
   echo Venv quebrada. Recriando...
   call :delete_venv
-  call %BASE_PY_CMD% -m venv "%VENV_DIR%"
+  call :run_base_python -m venv "%VENV_DIR%"
   if not exist "%VENV_DIR%\Scripts\python.exe" (
     echo.
     echo Falha ao criar venv.
@@ -173,6 +207,18 @@ rem ============================================================
 rem Helpers
 rem ============================================================
 
+:run_base_python
+if defined BASE_PY_EXE (
+  "%BASE_PY_EXE%" %*
+  exit /b %ERRORLEVEL%
+)
+if defined BASE_PY_LAUNCHER (
+  %BASE_PY_LAUNCHER% %*
+  exit /b %ERRORLEVEL%
+)
+exit /b 1
+
+
 :delete_venv
 if defined VENV_DIR (
   if exist "%VENV_DIR%" (
@@ -194,25 +240,39 @@ exit /b 0
 
 
 :find_base_python
-set "BASE_PY_CMD="
+set "BASE_PY_EXE="
+set "BASE_PY_LAUNCHER="
+set "BASE_PY_VERSION="
 
-rem 1) Try python.exe from PATH (where python)
-for /f "delims=" %%P in ('where python 2^>nul') do (
-  call :check_python_exe "%%P"
-  if defined BASE_PY_CMD exit /b 0
+rem 1) Try common per-user installs first
+if exist "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" (
+  call :check_python_exe "%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
+  if defined BASE_PY_EXE exit /b 0
+)
+if exist "%LOCALAPPDATA%\Programs\Python\Python311\python.exe" (
+  call :check_python_exe "%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
+  if defined BASE_PY_EXE exit /b 0
+)
+if exist "%LOCALAPPDATA%\Programs\Python\Python310\python.exe" (
+  call :check_python_exe "%LOCALAPPDATA%\Programs\Python\Python310\python.exe"
+  if defined BASE_PY_EXE exit /b 0
 )
 
-rem 2) Try py launcher (preferred versions)
+rem 2) Try py launcher
 where py >nul 2>&1
 if "%ERRORLEVEL%"=="0" (
   call :check_py_launcher "3.12"
-  if defined BASE_PY_CMD exit /b 0
+  if defined BASE_PY_LAUNCHER exit /b 0
   call :check_py_launcher "3.11"
-  if defined BASE_PY_CMD exit /b 0
+  if defined BASE_PY_LAUNCHER exit /b 0
   call :check_py_launcher "3.10"
-  if defined BASE_PY_CMD exit /b 0
-  call :check_py_launcher "3"
-  if defined BASE_PY_CMD exit /b 0
+  if defined BASE_PY_LAUNCHER exit /b 0
+)
+
+rem 3) Fallback to python.exe from PATH (where python)
+for /f "delims=" %%P in ('where python 2^>nul') do (
+  call :check_python_exe "%%P"
+  if defined BASE_PY_EXE exit /b 0
 )
 
 exit /b 0
@@ -220,18 +280,29 @@ exit /b 0
 
 :check_python_exe
 set "CANDIDATE=%~1"
-"%CANDIDATE%" -c "import sys, venv; exit(0 if sys.version_info[:2]>=(3,10) else 1)" >nul 2>&1
-if "%ERRORLEVEL%"=="0" (
-  set "BASE_PY_CMD="%CANDIDATE%""
+"%CANDIDATE%" -c "import sys, venv; exit(0 if (3,10) <= sys.version_info[:2] <= (3,12) else 1)" >nul 2>&1
+set "CANDIDATE_OK=%ERRORLEVEL%"
+"%CANDIDATE%" -c "import sys; print('%d.%d' % sys.version_info[:2])" > "%TEMP%\metax_pyver.txt" 2>nul
+set "CANDIDATE_VER="
+if exist "%TEMP%\metax_pyver.txt" (
+  set /p CANDIDATE_VER=<"%TEMP%\metax_pyver.txt"
+  del "%TEMP%\metax_pyver.txt" >nul 2>&1
 )
+if "%CANDIDATE_OK%"=="0" (
+  set "BASE_PY_EXE=%CANDIDATE%"
+  set "BASE_PY_VERSION=%CANDIDATE_VER%"
+  exit /b 0
+)
+if "%CANDIDATE_VER%"=="3.13" set "INCOMPATIBLE_PYTHON=%CANDIDATE% ^(Python %CANDIDATE_VER%^)"
 exit /b 0
 
 
 :check_py_launcher
 set "PYVER=%~1"
-py -%PYVER% -c "import sys, venv; exit(0 if sys.version_info[:2]>=(3,10) else 1)" >nul 2>&1
+py -%PYVER% -c "import sys, venv; exit(0 if (3,10) <= sys.version_info[:2] <= (3,12) else 1)" >nul 2>&1
 if "%ERRORLEVEL%"=="0" (
-  set "BASE_PY_CMD=py -%PYVER%"
+  set "BASE_PY_VERSION=%PYVER%"
+  set "BASE_PY_LAUNCHER=py -%PYVER%"
 )
 exit /b 0
 

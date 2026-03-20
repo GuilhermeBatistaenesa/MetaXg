@@ -13,7 +13,7 @@ if (-not $ReleaseDir) {
     if ($env:METAX_RELEASE_DIR) {
         $ReleaseDir = $env:METAX_RELEASE_DIR
     } else {
-        $ReleaseDir = "releases"
+        $ReleaseDir = "P:\ProcessoMetaX\releases"
     }
 }
 

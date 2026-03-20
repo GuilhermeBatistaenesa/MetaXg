@@ -5,3 +5,4 @@ Office365-REST-Python-Client==2.6.2
 python-dotenv==1.0.1
 pywin32>=306
 openpyxl==3.1.5
+reportlab==4.4.1

@@ -35,6 +35,19 @@ from config import (
 )
 
 
+def _read_robot_version() -> str:
+    version_path = os.path.join(ROOT_DIR, "version.txt")
+    try:
+        if os.path.exists(version_path):
+            with open(version_path, "r", encoding="utf-8") as f:
+                version = (f.readline() or "").strip()
+                if version:
+                    return version
+    except Exception:
+        pass
+    return "0.0.0"
+
+
 def obter_conexao() -> pyodbc.Connection:
     """Estabelece conexao com o banco de dados SQL Server."""
     connect_timeout = os.getenv("METAX_SQL_CONNECT_TIMEOUT", "15")
@@ -745,6 +758,8 @@ def main():
     args = _parse_args()
     execution_id = str(uuid.uuid4())
     started_at = datetime.now()
+    robot_version = _read_robot_version()
+    environment_name = os.getenv("METAX_ENV", "Producao")
     output_manager = OutputManager(
         execution_id=execution_id,
         object_name=OBJECT_NAME,
@@ -752,17 +767,28 @@ def main():
         local_root=ROOT_DIR,
         started_at=started_at,
     )
-    logger.configure(output_manager, execution_id, started_at, log_level=args.log_level)
+    logger.configure(
+        output_manager,
+        execution_id,
+        started_at,
+        log_level=args.log_level,
+        robot_name=OBJECT_NAME,
+        robot_version=robot_version,
+        environment_name=environment_name,
+    )
     logger.set_run_status("RUNNING")
     _ensure_public_dirs()
     _ensure_output_dirs()
     _escrever_documento_operacional_publico()
 
-    logger.info("===== INICIO PROCESSO SHAREPOINT + METAX =====")
+    logger.stage(1, 5, "Preparacao inicial")
+    logger.info("Iniciando processo SharePoint + MetaX.")
 
     run_context = {
         "execution_id": execution_id,
         "object_name": OBJECT_NAME,
+        "robot_name": OBJECT_NAME,
+        "robot_version": robot_version,
         "started_at": started_at.isoformat(),
         "finished_at": None,
         "duration_sec": None,
@@ -808,6 +834,8 @@ def main():
             logger.info("TXT público não encontrado; rodando modo normal (SQL).")
             nomes_txt = []
 
+        logger.ok("Preparacao inicial concluida.")
+        logger.stage(2, 5, "Coleta de itens")
         if nomes_txt:
             logger.info("Modo TXT ativo: filtrando SQL por lista manual.")
             try:
@@ -845,6 +873,8 @@ def main():
         funcionarios = list(unique_by_cpf.values())
 
         logger.info(f"Funcionarios a processar: {len(funcionarios)}", details={"total": len(funcionarios)})
+        logger.ok("Coleta de itens concluida.", details={"total": len(funcionarios)})
+        logger.stage(3, 5, "Processamento")
 
         # Download lazy por CPF: evita baixar foto de quem sera pulado por rascunho existente.
         fotos_cache: dict[str, str | None] = {}
@@ -1099,6 +1129,8 @@ def main():
         run_context["manifest_path"] = final_manifest_path
         manifest["manifest_path"] = final_manifest_path
 
+        logger.ok("Processamento concluido.")
+        logger.stage(4, 5, "Geracao de evidencias")
         logger.info("Gerando relatorios...")
         report_path = gerar_relatorio_txt(manifest, output_manager)
         run_context["report_path"] = report_path
@@ -1123,6 +1155,8 @@ def main():
         attachments.extend(_coletar_fotos_pendencias(manifest))
         attachments = _filtrar_arquivos_existentes(attachments)
 
+        logger.ok("Evidencias geradas.")
+        logger.stage(5, 5, "Encerramento")
         if not args.dry_run and not args.no_email:
             try:
                 email_status = enviar_relatorio_email(
@@ -1175,7 +1209,14 @@ def main():
         except Exception as e:
             logger.error("Falha ao atualizar auditoria Excel", details={"error": str(e)})
         logger.flush()
-        logger.info("===== FIM PROCESSO =====")
+        logger.resum(f"Status final: {run_context['run_status']}")
+        logger.finish_summary(
+            started_at=started_at,
+            finished_at=finished_at,
+            status=run_context["run_status"],
+            report_path=run_context.get("report_path"),
+            totals=manifest.get("totals"),
+        )
 
 
 if __name__ == "__main__":
