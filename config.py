@@ -12,6 +12,7 @@ else:
 load_dotenv(dotenv_path=os.path.join(BASE_DIR, ".env"))
 
 ROOT_DIR = BASE_DIR
+DEFAULT_PUBLIC_BASE_DIR = r"P:\ProcessoMetaX"
 
 # Sharepoint Configuration
 SHAREPOINT_SITE_URL = os.getenv("SHAREPOINT_SITE_URL")
@@ -40,25 +41,26 @@ def _default_public_base() -> str:
     env_base = os.getenv("PUBLIC_BASE_DIR")
     if env_base:
         return env_base
-    if os.path.exists(r"P:\ProcessoMetaX"):
-        return r"P:\ProcessoMetaX"
+    if os.path.exists(DEFAULT_PUBLIC_BASE_DIR):
+        return DEFAULT_PUBLIC_BASE_DIR
     return ROOT_DIR
 
 PUBLIC_BASE_DIR = _default_public_base()
 OBJECT_NAME = os.getenv("OBJECT_NAME", "MetaXg")
-PUBLIC_INPUTS_DIR = os.getenv("PUBLIC_INPUTS_DIR", os.path.join(PUBLIC_BASE_DIR, "em processamento"))
-PUBLIC_CODE_DIR = os.getenv("PUBLIC_CODE_DIR", os.path.join(PUBLIC_BASE_DIR, "Codigo"))
-PUBLIC_PROCESSADOS_DIR = os.getenv("PUBLIC_PROCESSADOS_DIR", os.path.join(PUBLIC_BASE_DIR, "processados"))
-PUBLIC_ERROS_DIR = os.getenv("PUBLIC_ERROS_DIR", os.path.join(PUBLIC_BASE_DIR, "erros"))
+PUBLIC_INPUTS_DIR = os.getenv("PUBLIC_INPUTS_DIR", os.path.join(PUBLIC_BASE_DIR, "entrada"))
+PUBLIC_CODE_DIR = os.getenv("PUBLIC_CODE_DIR", os.path.join(r"Z:\T.I", "MetaXg"))
+PUBLIC_PROCESSADOS_DIR = os.getenv("PUBLIC_PROCESSADOS_DIR", os.path.join(PUBLIC_BASE_DIR, "fotos", "processados"))
+PUBLIC_ERROS_DIR = os.getenv("PUBLIC_ERROS_DIR", os.path.join(PUBLIC_BASE_DIR, "fotos", "erros"))
 PUBLIC_LOGS_DIR = os.getenv("PUBLIC_LOGS_DIR", os.path.join(PUBLIC_BASE_DIR, "logs"))
 PUBLIC_RELATORIOS_DIR = os.getenv("PUBLIC_RELATORIOS_DIR", os.path.join(PUBLIC_BASE_DIR, "relatorios"))
 PUBLIC_JSON_DIR = os.getenv("PUBLIC_JSON_DIR", os.path.join(PUBLIC_BASE_DIR, "json"))
 PUBLIC_RELEASES_DIR = os.getenv("PUBLIC_RELEASES_DIR", os.path.join(PUBLIC_BASE_DIR, "releases"))
+PUBLIC_SCREENSHOTS_DIR = os.getenv("PUBLIC_SCREENSHOTS_DIR", os.path.join(PUBLIC_BASE_DIR, "screenshots"))
 
 # Paths
 FOTOS_EM_PROCESSAMENTO_DIR = os.getenv(
     "FOTOS_EM_PROCESSAMENTO_DIR",
-    os.getenv("PASTA_FOTOS", os.path.join(PUBLIC_BASE_DIR, "em processamento")),
+    os.getenv("PASTA_FOTOS", os.path.join(PUBLIC_BASE_DIR, "fotos", "em_processamento")),
 )
 FOTOS_PROCESSADOS_DIR = os.getenv("FOTOS_PROCESSADOS_DIR", PUBLIC_PROCESSADOS_DIR)
 FOTOS_ERROS_DIR = os.getenv("FOTOS_ERROS_DIR", PUBLIC_ERROS_DIR)
@@ -73,7 +75,34 @@ try:
 except ValueError:
     DIAS_RETROATIVOS = 0
 
-EMAIL_NOTIFICACAO = os.getenv("EMAIL_NOTIFICACAO", "")
+def _normalize_email_recipients(raw_value: str | None) -> str:
+    if not raw_value:
+        return ""
+
+    normalized = raw_value.replace(";", ",")
+    recipients = []
+    for item in normalized.split(","):
+        email = item.strip().strip('"').strip("'")
+        if email:
+            recipients.append(email)
+    return "; ".join(recipients)
+
+
+EMAIL_NOTIFICACAO = _normalize_email_recipients(os.getenv("EMAIL_NOTIFICACAO", ""))
+EMAIL_REMETENTE = os.getenv("EMAIL_REMETENTE", "")
+EMAIL_SMTP_HOST = os.getenv("EMAIL_SMTP_HOST", "")
+try:
+    EMAIL_SMTP_PORT = int(os.getenv("EMAIL_SMTP_PORT", "587"))
+except ValueError:
+    EMAIL_SMTP_PORT = 587
+EMAIL_SMTP_USER = os.getenv("EMAIL_SMTP_USER", "")
+EMAIL_SMTP_PASSWORD = os.getenv("EMAIL_SMTP_PASSWORD", "")
+EMAIL_SMTP_USE_TLS = os.getenv("EMAIL_SMTP_USE_TLS", "1").strip().lower() not in {"0", "false", "no", "off"}
+EMAIL_SMTP_USE_SSL = os.getenv("EMAIL_SMTP_USE_SSL", "0").strip().lower() in {"1", "true", "yes", "on"}
+try:
+    EMAIL_MAX_ATTACHMENTS_MB = int(os.getenv("EMAIL_MAX_ATTACHMENTS_MB", "12"))
+except ValueError:
+    EMAIL_MAX_ATTACHMENTS_MB = 12
 
 # Ensure directories exist
 os.makedirs(LOG_DIR, exist_ok=True)

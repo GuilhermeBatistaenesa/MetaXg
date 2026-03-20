@@ -28,7 +28,7 @@ from config import (
     DB_DRIVER, DB_SERVER, DB_NAME, DB_USER, DB_PASSWORD, DIAS_RETROATIVOS,
     ROOT_DIR, PUBLIC_BASE_DIR, PUBLIC_INPUTS_DIR, OBJECT_NAME,
     PUBLIC_CODE_DIR, PUBLIC_PROCESSADOS_DIR, PUBLIC_ERROS_DIR,
-    PUBLIC_LOGS_DIR, PUBLIC_RELATORIOS_DIR, PUBLIC_JSON_DIR, PUBLIC_RELEASES_DIR,
+    PUBLIC_LOGS_DIR, PUBLIC_RELATORIOS_DIR, PUBLIC_JSON_DIR, PUBLIC_RELEASES_DIR, PUBLIC_SCREENSHOTS_DIR,
     FOTOS_EM_PROCESSAMENTO_DIR, FOTOS_PROCESSADOS_DIR, FOTOS_ERROS_DIR, FOTOS_BUSCA_DIRS,
     METAX_CONTRATO_MECANICA_VALUE, METAX_CONTRATO_MECANICA_LABEL,
     METAX_CONTRATO_ELETROMECANICA_VALUE, METAX_CONTRATO_ELETROMECANICA_LABEL
@@ -337,6 +337,7 @@ from reporting import (
     gerar_relatorio_json,
     gerar_resumo_execucao_md,
     gerar_diagnostico_ultima_execucao,
+    gerar_relatorios_erros_pdf,
 )
 
 
@@ -392,6 +393,10 @@ def _criar_registro_base(nome: str, cpf_limpo: str, pessoa_started_at: str) -> d
     return {
         "nome": nome,
         "cpf": cpf_limpo,
+        "foto_path": None,
+        "foto_publica_path": None,
+        "contrato_chave": None,
+        "dados_funcionario": {},
         "attempted": False,
         "action_saved": False,
         "verified": False,
@@ -408,6 +413,82 @@ def _criar_registro_base(nome: str, cpf_limpo: str, pessoa_started_at: str) -> d
         },
         "no_photo": False,
     }
+
+
+def _serializar_valor_manifest(value):
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
+
+
+def _snapshot_funcionario(funcionario: dict) -> dict:
+    if not funcionario:
+        return {}
+    return {
+        str(key): _serializar_valor_manifest(value)
+        for key, value in funcionario.items()
+    }
+
+
+def _coletar_fotos_pendencias(manifest: dict) -> list[str]:
+    paths = []
+    outcomes_pendencia = {
+        OUTCOME_FAILED_ACTION,
+        OUTCOME_FAILED_VERIFICATION,
+        OUTCOME_SAVED_NOT_VERIFIED,
+    }
+    for person in manifest.get("people", []):
+        if person.get("outcome") not in outcomes_pendencia:
+            continue
+        foto_path = person.get("foto_publica_path") or person.get("foto_path")
+        if foto_path and os.path.exists(foto_path) and foto_path not in paths:
+            paths.append(foto_path)
+    return paths
+
+
+def _slug_nome_arquivo(texto: str) -> str:
+    texto = re.sub(r"[^\w\-]+", "_", (texto or "").strip().lower(), flags=re.UNICODE)
+    return texto.strip("_") or "sem_texto"
+
+
+def _nome_base_execucao(started_at: datetime, run_status: str) -> str:
+    status = _slug_nome_arquivo(run_status or "running")
+    return f"{started_at.strftime('%Y-%m-%d')}__{started_at.strftime('%Hh%M')}__{status}"
+
+
+def _filtrar_arquivos_existentes(paths: list[str]) -> list[str]:
+    existentes = []
+    vistos = set()
+    for path in paths or []:
+        if not path or path in vistos:
+            continue
+        vistos.add(path)
+        if os.path.exists(path):
+            existentes.append(path)
+        else:
+            logger.warn("Anexo ignorado porque nao existe.", details={"path": path})
+    return existentes
+
+
+def _persistir_manifest(output_manager: OutputManager, manifest: dict, filename: str) -> str:
+    try:
+        output_manager.write_json(KIND_JSON, filename, manifest)
+    except Exception as e:
+        logger.error("Falha ao gravar manifest.", details={"filename": filename, "error": str(e)})
+
+    preferred_path = output_manager.get_preferred_path(KIND_JSON, filename)
+    if os.path.exists(preferred_path):
+        return preferred_path
+
+    local_path = output_manager.get_local_path(KIND_JSON, filename)
+    public_path = output_manager.get_public_path(KIND_JSON, filename)
+    logger.error(
+        "Manifest nao encontrado apos gravacao.",
+        details={"filename": filename, "local_path": local_path, "public_path": public_path},
+    )
+    return local_path
 
 
 def carregar_lista_nomes_txt(path: str) -> list[str]:
@@ -516,12 +597,15 @@ def _escrever_documento_operacional_publico():
         "OPERACAO METAXG (RAPIDO)\\n"
         f"1) Coloque o TXT em: {os.path.join(PUBLIC_INPUTS_DIR, 'cadastrar_metax.txt')}\\n"
         "2) Rode o robo normalmente (Python ou EXE).\\n"
-        "3) Resolva o CAPTCHA quando solicitado.\\n"
-        "4) Confira o relatorio em relatorios/ e o email (se habilitado).\\n"
-        "5) O TXT se auto-limpa: nomes processados sao removidos.\\n"
-        "6) Evidencias de falha de verificacao:\\n"
-        "   - logs/screenshots/verify_fail_<cpf>_...png\\n"
-        "   - json/verify_debug_<cpf>_...json\\n"
+        f"3) O codigo oficial do MetaXg fica em: {PUBLIC_CODE_DIR}\\n"
+        "4) Resolva o CAPTCHA quando solicitado.\\n"
+        f"5) Confira relatorios em: {PUBLIC_RELATORIOS_DIR}\\n"
+        f"6) Confira logs em: {PUBLIC_LOGS_DIR}\\n"
+        f"7) Confira screenshots em: {PUBLIC_SCREENSHOTS_DIR}\\n"
+        "8) O TXT se auto-limpa: nomes processados sao removidos.\\n"
+        "9) Evidencias de falha de verificacao:\\n"
+        f"   - {os.path.join(PUBLIC_SCREENSHOTS_DIR, 'verify_fail_<cpf>_...png')}\\n"
+        f"   - {os.path.join(PUBLIC_JSON_DIR, 'verify_debug_<cpf>_...json')}\\n"
     )
     with open(path, "w", encoding="utf-8") as f:
         f.write(conteudo)
@@ -542,7 +626,7 @@ def _ensure_public_dirs():
         PUBLIC_PROCESSADOS_DIR,
         PUBLIC_ERROS_DIR,
         PUBLIC_LOGS_DIR,
-        os.path.join(PUBLIC_LOGS_DIR, "screenshots") if PUBLIC_LOGS_DIR else None,
+        PUBLIC_SCREENSHOTS_DIR,
         PUBLIC_RELATORIOS_DIR,
         PUBLIC_JSON_DIR,
         PUBLIC_RELEASES_DIR,
@@ -598,9 +682,9 @@ def _classificar_foto_pos_processamento(
     caminho_foto: str, status_final: str, execution_id: str, started_at: datetime
 ):
     if not caminho_foto:
-        return
+        return None
     if not _is_subpath(caminho_foto, FOTOS_EM_PROCESSAMENTO_DIR):
-        return
+        return caminho_foto
     destino = _resolver_destino_foto(status_final, started_at)
     try:
         novo_caminho = _mover_foto_para_dir(caminho_foto, destino, execution_id)
@@ -609,11 +693,13 @@ def _classificar_foto_pos_processamento(
                 "Foto movida apos processamento",
                 details={"from": caminho_foto, "to": novo_caminho, "status_final": status_final},
             )
+        return novo_caminho or caminho_foto
     except Exception as e:
         logger.warn(
             "Falha ao mover foto apos processamento",
             details={"path": caminho_foto, "destino": destino, "error": str(e)},
         )
+        return caminho_foto
 
 
 def _montar_erros_auditoria(manifest: dict) -> list[dict]:
@@ -790,6 +876,8 @@ def main():
                 centro_custo = func.get("CENTRO_CUSTO")
                 pessoa_started_at = datetime.now().isoformat()
                 registro = _criar_registro_base(nome, cpf_limpo, pessoa_started_at)
+                registro["dados_funcionario"] = _snapshot_funcionario(func)
+                registro["contrato_chave"] = _classificar_contrato_por_centro_custo(centro_custo)
                 registro["status_final"] = "FAILED"
                 registro["outcome"] = OUTCOME_FAILED_ACTION
                 registro["errors"]["action_error"] = f"Centro de custo desconhecido: {centro_custo}"
@@ -798,7 +886,10 @@ def main():
                     details={"cpf": cpf_limpo, "centro_custo": centro_custo},
                 )
                 manifest["people"].append(registro)
-                _classificar_foto_pos_processamento(caminho_foto, registro["status_final"], execution_id, started_at)
+                registro["foto_path"] = _classificar_foto_pos_processamento(
+                    caminho_foto, registro["status_final"], execution_id, started_at
+                )
+                registro["foto_publica_path"] = registro["foto_path"]
 
         for chave in ("MECANICA", "ELETROMECANICA"):
             funcs_grupo = grupos[chave]
@@ -835,7 +926,11 @@ def main():
 
                     pessoa_started_at = datetime.now().isoformat()
                     registro = _criar_registro_base(nome, cpf_limpo, pessoa_started_at)
+                    registro["dados_funcionario"] = _snapshot_funcionario(func)
+                    registro["contrato_chave"] = chave
                     caminho_foto = fotos_cache.get(cpf_limpo)
+                    registro["foto_path"] = caminho_foto
+                    registro["foto_publica_path"] = caminho_foto
 
                     if cpf_limpo in rascunhos_existentes:
                         logger.info(f"Funcionario {nome} ja consta nos rascunhos (CACHE). Pulando...", details={"cpf": cpf})
@@ -845,7 +940,10 @@ def main():
                         registro["errors"]["action_error"] = "Ignorado: rascunho ja existente (cache)."
                         nomes_processados_no_run.add(_normalizar_nome(nome))
                         manifest["people"].append(registro)
-                        _classificar_foto_pos_processamento(caminho_foto, registro["status_final"], execution_id, started_at)
+                        registro["foto_path"] = _classificar_foto_pos_processamento(
+                            caminho_foto, registro["status_final"], execution_id, started_at
+                        )
+                        registro["foto_publica_path"] = registro["foto_path"]
                         continue
 
                     if cpf_limpo not in fotos_cache:
@@ -863,6 +961,8 @@ def main():
                             fotos_cache[cpf_limpo] = None
 
                     caminho_foto = fotos_cache.get(cpf_limpo)
+                    registro["foto_path"] = caminho_foto
+                    registro["foto_publica_path"] = caminho_foto
 
                     if caminho_foto:
                         logger.info(f"Foto pronta para {nome}", details={"cpf": cpf, "foto": caminho_foto})
@@ -894,7 +994,10 @@ def main():
                             pass
 
                         manifest["people"].append(registro)
-                        _classificar_foto_pos_processamento(caminho_foto, registro["status_final"], execution_id, started_at)
+                        registro["foto_path"] = _classificar_foto_pos_processamento(
+                            caminho_foto, registro["status_final"], execution_id, started_at
+                        )
+                        registro["foto_publica_path"] = registro["foto_path"]
                         continue
 
                     # Blindagem do contrato de retorno do action
@@ -947,7 +1050,10 @@ def main():
                         registro["errors"]["action_error"] = action.get("error") or "Falha ao salvar rascunho."
 
                     manifest["people"].append(registro)
-                    _classificar_foto_pos_processamento(caminho_foto, registro["status_final"], execution_id, started_at)
+                    registro["foto_path"] = _classificar_foto_pos_processamento(
+                        caminho_foto, registro["status_final"], execution_id, started_at
+                    )
+                    registro["foto_publica_path"] = registro["foto_path"]
             finally:
                 if browser:
                     logger.info("Fechando navegador...")
@@ -987,9 +1093,9 @@ def main():
         run_context["public_write_error"] = output_manager.public_write_error
         logger.set_run_status(run_context["run_status"])
 
-        data_str = started_at.strftime("%Y-%m-%d_%H-%M-%S")
-        manifest_filename = f"manifest_{data_str}__{execution_id}.json"
-        final_manifest_path = output_manager.get_local_path(KIND_JSON, manifest_filename)
+        base_execucao = _nome_base_execucao(started_at, run_context["run_status"])
+        manifest_filename = f"{base_execucao}__manifest.json"
+        final_manifest_path = output_manager.get_preferred_path(KIND_JSON, manifest_filename)
         run_context["manifest_path"] = final_manifest_path
         manifest["manifest_path"] = final_manifest_path
 
@@ -1002,9 +1108,20 @@ def main():
         run_context["relatorio_json_path"] = relatorio_json_path
         diagnostico_path = gerar_diagnostico_ultima_execucao(manifest, output_manager)
         run_context["diagnostico_path"] = diagnostico_path
+        relatorios_erros_pdf_paths = gerar_relatorios_erros_pdf(manifest, output_manager)
+        run_context["erros_pdf_paths"] = relatorios_erros_pdf_paths
 
-        manifest_partial_filename = f"manifest_partial_{data_str}__{execution_id}.json"
-        manifest_partial_path = output_manager.write_json(KIND_JSON, manifest_partial_filename, manifest)
+        manifest_partial_filename = f"{base_execucao}__manifest_parcial.json"
+        manifest_partial_path = _persistir_manifest(output_manager, manifest, manifest_partial_filename)
+
+        final_manifest_path = _persistir_manifest(output_manager, manifest, manifest_filename)
+        run_context["manifest_path"] = final_manifest_path
+        manifest["manifest_path"] = final_manifest_path
+
+        attachments = [report_path, manifest_partial_path]
+        attachments.extend(relatorios_erros_pdf_paths or [])
+        attachments.extend(_coletar_fotos_pendencias(manifest))
+        attachments = _filtrar_arquivos_existentes(attachments)
 
         if not args.dry_run and not args.no_email:
             try:
@@ -1013,7 +1130,7 @@ def main():
                     report_path=report_path,
                     manifest_path=final_manifest_path,
                     partial_manifest_path=manifest_partial_path,
-                    attachment_paths=[report_path, manifest_partial_path],
+                    attachment_paths=attachments,
                 )
                 run_context["email_status"] = email_status
             except Exception as e:
@@ -1025,7 +1142,9 @@ def main():
             else:
                 run_context["email_status"] = OUTCOME_SKIPPED_EMAIL_DISABLED
 
-        output_manager.write_json(KIND_JSON, manifest_filename, manifest)
+        final_manifest_path = _persistir_manifest(output_manager, manifest, manifest_filename)
+        run_context["manifest_path"] = final_manifest_path
+        manifest["manifest_path"] = final_manifest_path
         try:
             total_sucesso = sum(1 for p in manifest.get("people", []) if p.get("status_final") == "SUCCESS")
             total_erro = sum(1 for p in manifest.get("people", []) if p.get("status_final") == "FAILED")

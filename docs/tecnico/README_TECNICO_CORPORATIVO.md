@@ -1,30 +1,29 @@
-﻿# README Tecnico Corporativo - ProcessoMetaX
+# README Tecnico Corporativo - ProcessoMetaX
 
 ## Visao geral
-Automacao corporativa em producao. Este documento define operacao e governanca sem alterar logica de negocio.
+Automacao corporativa de cadastro no MetaX com SQL, SharePoint, Playwright, envio de e-mail e camada de evidencias operacionais.
 
-## Escopo
-- Estrutura, documentacao e governanca
-- Sem mudanca de fluxo operacional
-
-## Fluxo operacional (alto nivel)
-SQL/SharePoint -> MetaX
-
-## Base operacional
-P:\ProcessoMetaX
+## Base oficial
+- Codigo: `Z:\T.I\MetaXg`
+- Operacao: `P:\ProcessoMetaX`
 
 ## Pastas de artefatos
-- em processamento/
-- processados/
-- erros/
-- logs/
-- relatorios/
-- json/
-- releases/
+- `entrada`
+- `fotos\em_processamento`
+- `fotos\processados`
+- `fotos\erros`
+- `logs`
+- `relatorios`
+- `json`
+- `screenshots`
+- `releases`
 
-## Versionamento
-- SemVer: MAJOR.MINOR.PATCH
-- Changelog obrigatorio em CHANGELOG.md
+## Pilares operacionais
+- artefato publico em `P:`
+- log estruturado
+- manifest parcial e final
+- envio por Outlook ou SMTP
+- rollback seguro no runner
 
 ## Ownership
 - Responsavel tecnico: preencher

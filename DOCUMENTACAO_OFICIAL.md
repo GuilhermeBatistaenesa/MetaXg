@@ -1,106 +1,68 @@
 # Documentacao Oficial - MetaXg
 
 ## Visao geral
-MetaXg e um robo RPA para integracao entre RM Labore e portal MetaX, com padrao corporativo de operacao, releases e auditoria.
+MetaXg e o robo de cadastro de colaboradores no portal MetaX com integracao entre RM Labore, SharePoint, Playwright e camada de evidencias operacionais.
 
-## Pre-requisitos (Windows alvo)
-- ODBC Driver 17/18 precisa estar instalado.
-- (Opcional) Outlook Desktop instalado para envio de e-mail (usa `pywin32`).
+## Ambiente oficial
+- Codigo: `Z:\T.I\MetaXg`
+- Operacao publica: `P:\ProcessoMetaX`
 
-## Modos de execucao
-1. Execucao direta do app (`main.py`) em ambiente Python.
-2. Execucao via Runner (`runner.py`), com update automatico e fallback GitHub.
+## Fluxo resumido
+1. Buscar colaboradores no SQL dentro da janela configurada
+2. Classificar por contrato
+3. Baixar foto
+4. Abrir sessao no MetaX
+5. Passar pelo captcha em modo semiautomatico
+6. Preencher cadastro
+7. Salvar rascunho
+8. Verificar se o CPF apareceu na lista
+9. Gerar artefatos
+10. Enviar e-mail
 
-## Estrutura de pastas (hub)
-Base: `PUBLIC_BASE_DIR` (default `P:\ProcessoMetaX` se existir, senao usa o diretório do projeto)
+## Artefatos publicos
+- `P:\ProcessoMetaX\logs`
+- `P:\ProcessoMetaX\relatorios`
+- `P:\ProcessoMetaX\json`
+- `P:\ProcessoMetaX\screenshots`
+- `P:\ProcessoMetaX\fotos\processados`
+- `P:\ProcessoMetaX\fotos\erros`
 
-Pastas operacionais:
-- `Codigo\`
-- `em processamento\`
-- `processados\`
-- `erros\`
-- `logs\` (alias)
-- `relatorios\` (alias)
-- `json\` (alias)
-- `07_LOGS\` (padrão legado por data)
-- `08_RELATORIOS\` (padrão legado por data)
-- `09_JSON\` (padrão legado por data)
-- `10_SCREENSHOTS\` (padrão legado por data)
-- `releases\`
+## Convencao atual de nomes
+- `AAAA-MM-DD__HHhMM__status__relatorio_execucao.txt`
+- `AAAA-MM-DD__HHhMM__status__manifest.json`
+- `AAAA-MM-DD__HHhMM__status__manifest_parcial.json`
+- `AAAA-MM-DD__HHhMM__status__resumo_execucao.md`
+- `AAAA-MM-DD__HHhMM__pendencia_contrato_indice_nome_chapa.pdf`
 
-## Logs e evidencias
-Local:
-- `logs\` (logs gerais)
-- `logs\screenshots\` (evidencias)
-- `relatorios\` (relatorios TXT)
-- `json\` (manifest e JSON tecnico)
+## E-mail corporativo
+- Outlook continua suportado
+- SMTP esta suportado como fallback principal quando o Outlook COM falhar
+- Anexos priorizam caminhos publicos em `P:\ProcessoMetaX`
 
-Padrao adicional (em `logs\`):
-- `diagnostico_ultima_execucao.txt`
-- `relatorio_<data>__<execid>.json`
-- `resumo_execucao_<data>__<execid>.md`
-- `metax_last_run.log` (runner)
+## Captcha
+- Destaque visual na aba do MetaX
+- Alerta sonoro
+- Clique semiautomatico no checkbox
+- Tentativa automatica no botao `Validar`
+- Espera manual somente quando o desafio exigir imagem
 
-Rede:
-Os mesmos artefatos sao gravados em `PUBLIC_BASE_DIR\07_LOGS`, `08_RELATORIOS`, `09_JSON`, `10_SCREENSHOTS` (padrao legado por data) e em alias `PUBLIC_BASE_DIR\logs`, `relatorios`, `json`, `logs\screenshots`.
+## Observabilidade
+- Log estruturado em `.jsonl`
+- Manifest parcial e final
+- Relatorio TXT
+- Resumo Markdown
+- Relatorio JSON
+- PDFs de pendencia individual
+- Screenshot e JSON tecnico em falha de verificacao
 
-Fotos (pipeline):
-- Entrada e processamento: `PUBLIC_BASE_DIR\em processamento`
-- Concluidas/ok: `PUBLIC_BASE_DIR\processados`
-- Com erro: `PUBLIC_BASE_DIR\erros`
-- Observacao: fotos em `processados` e `erros` ficam em subpastas por data (YYYY-MM-DD).
+## Regras de leitura do resultado
+- `VERIFIED_SUCCESS`: rascunho salvo e CPF confirmado
+- `SAVED_NOT_VERIFIED`: portal respondeu sucesso, mas o CPF nao foi confirmado
+- `FAILED_ACTION`: falha durante preenchimento ou salvamento
+- `FAILED_VERIFICATION`: erro tecnico na etapa de verificacao
+- `SKIPPED_ALREADY_EXISTS`: CPF ja estava no cache de rascunhos
 
-## Runner: atualizacao segura
-Fluxo:
-1. Le `version.txt` em `install_dir` (config.json).
-2. Busca `latest.json` em `network_release_dir` (config.json).
-3. Se falhar, usa GitHub Releases.
-4. Valida SHA256.
-5. Extrai em staging e faz swap com backup.
-6. Executa o exe dentro de `install_dir\app\current`.
-
-Rollback:
-- Automatico se falhar apos mover `current`.
-- Backup mantido em `install_dir\app\backup`.
-
-Schema do latest.json (ASO):
-```json
-{
-  "version": "1.0.0",
-  "package_filename": "MetaXg_1.0.0.zip",
-  "sha256_filename": "MetaXg_1.0.0.sha256"
-}
-```
-
-GitHub fallback (opcional):
-- Se `github_repo` estiver vazio/ausente, o runner nao tenta GitHub.
-
-Config (runner):
-- `install_dir`
-- `prefer_network`
-- `allow_prerelease`
-- `run_args`
-- `log_level`
-
-## Processo de release
-1. Build onedir do executavel:
-   - `build_windows.bat`
-2. Gerar zip + sha256 + latest.json:
-   - `build_zip.bat -Bump patch`
-3. Publicar em `network_release_dir`:
-- `MetaXg_<versao>.zip`
-- `MetaXg_<versao>.sha256`
-- `latest.json`
-
-## Troubleshooting
-- Rede indisponivel: runner executa a versao atual.
-- SHA256 divergente: update abortado.
-- Exe ausente em current: runner registra erro e retorna codigo 1.
-- Falha ao escrever logs na rede: execucao segue, com alerta no diagnostico.
-
-## Checklist de validacao
-- Rede disponivel: update pela rede.
-- Rede indisponivel: fallback GitHub.
-- SHA invalido: update abortado e executa versao atual.
-- Rollback acionado: backup restaurado.
-- Exe em `current` executado.
+## Runner e releases
+- Releases publicas em `P:\ProcessoMetaX\releases`
+- Fallback opcional via GitHub Releases
+- Validacao de integridade por SHA256

@@ -41,13 +41,13 @@ class OutputManager:
 
     def _public_base_dir(self, kind: str) -> str:
         if kind == KIND_LOGS:
-            return "07_LOGS"
+            return "logs"
         if kind == KIND_RELATORIOS:
-            return "08_RELATORIOS"
+            return "relatorios"
         if kind == KIND_JSON:
-            return "09_JSON"
+            return "json"
         if kind == KIND_SCREENSHOTS:
-            return "10_SCREENSHOTS"
+            return "screenshots"
         raise ValueError(f"Tipo de output invalido: {kind}")
 
     def _public_alias_base_dir(self, kind: str) -> str:
@@ -58,13 +58,8 @@ class OutputManager:
         if kind == KIND_JSON:
             return "json"
         if kind == KIND_SCREENSHOTS:
-            return os.path.join("logs", "screenshots")
+            return "screenshots"
         raise ValueError(f"Tipo de output invalido: {kind}")
-
-    def _dated_dir(self, base_dir: str, when: datetime) -> str:
-        year = when.strftime("%Y")
-        month = when.strftime("%m")
-        return os.path.join(base_dir, self.object_name, year, month)
 
     def _ensure_dir(self, path: str):
         os.makedirs(path, exist_ok=True)
@@ -103,7 +98,7 @@ class OutputManager:
     ):
         try:
             base = base_fn(kind)
-            dest_dir = self._dated_dir(os.path.join(self.public_base_dir, base), when)
+            dest_dir = os.path.join(self.public_base_dir, base)
             dest_path = os.path.join(dest_dir, filename)
             self._atomic_write_text(dest_path, content)
         except Exception as e:
@@ -128,7 +123,7 @@ class OutputManager:
     ):
         try:
             base = base_fn(kind)
-            dest_dir = self._dated_dir(os.path.join(self.public_base_dir, base), when)
+            dest_dir = os.path.join(self.public_base_dir, base)
             self._ensure_dir(dest_dir)
             dest_path = os.path.join(dest_dir, filename)
             with open(dest_path, "a", encoding="utf-8") as f:
@@ -155,7 +150,7 @@ class OutputManager:
     ):
         try:
             base = base_fn(kind)
-            dest_dir = self._dated_dir(os.path.join(self.public_base_dir, base), when)
+            dest_dir = os.path.join(self.public_base_dir, base)
             dest_path = os.path.join(dest_dir, filename)
             self._atomic_write_bytes(dest_path, data)
         except Exception as e:
@@ -190,6 +185,18 @@ class OutputManager:
     def get_local_path(self, kind: str, filename: str) -> str:
         local_dir = self._local_base_dir(kind)
         return os.path.join(local_dir, filename)
+
+    def get_public_path(self, kind: str, filename: str) -> str | None:
+        if not self.public_base_dir:
+            return None
+        base = self._public_alias_base_dir(kind)
+        return os.path.join(self.public_base_dir, base, filename)
+
+    def get_preferred_path(self, kind: str, filename: str) -> str:
+        public_path = self.get_public_path(kind, filename)
+        if public_path and os.path.exists(public_path):
+            return public_path
+        return self.get_local_path(kind, filename)
 
     def write_json(self, kind: str, filename: str, data: dict, when: datetime = None) -> str:
         content = json.dumps(data, ensure_ascii=False, indent=2)

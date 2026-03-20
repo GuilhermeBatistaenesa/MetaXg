@@ -1,4 +1,4 @@
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+﻿from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 import unicodedata
 from datetime import date, datetime
 import os
@@ -28,25 +28,213 @@ from output_manager import OutputManager, KIND_SCREENSHOTS, KIND_JSON
 
 TIMEOUT = 60000 
 TEMPO_CAPTCHA_MS = 180000 
+TIMEOUT_CURTO = 8000
+TIMEOUT_MEDIO = 15000
+
+
+def _somente_digitos(valor) -> str:
+    return "".join(filter(str.isdigit, str(valor or "")))
+
+
+def _capturar_screenshot_seguro(page, timeout_ms: int = 8000):
+    """
+    Captura screenshot sem deixar a execuÃ§Ã£o presa por muito tempo em casos de
+    fonte pendente, modal travado ou pÃ¡gina instÃ¡vel.
+    """
+    return page.screenshot(timeout=timeout_ms, full_page=False, animations="disabled")
+
+
+def _esperar_visivel(page, seletor: str, timeout: int = TIMEOUT_CURTO):
+    page.wait_for_selector(seletor, state="visible", timeout=timeout)
+
+
+def _preencher_campo_rapido(page, seletor: str, valor: str, timeout: int = TIMEOUT_CURTO):
+    _esperar_visivel(page, seletor, timeout=timeout)
+    page.fill(seletor, valor)
+    try:
+        page.wait_for_function(
+            """([sel, esperado]) => {
+                const el = document.querySelector(sel);
+                if (!el) return false;
+                return String(el.value || '') === String(esperado || '');
+            }""",
+            [seletor, valor],
+            timeout=1500,
+        )
+    except Exception:
+        pass
+
+
+def _aguardar_combo_carregado(page, seletor: str, timeout: int = TIMEOUT_MEDIO) -> bool:
+    try:
+        page.wait_for_function(
+            """(sel) => {
+                const el = document.querySelector(sel);
+                if (!el) return false;
+                const options = el.options || [];
+                const validas = Array.from(options).filter(o => {
+                    const texto = (o.textContent || '').trim().toUpperCase();
+                    const valor = (o.value || '').trim();
+                    return valor && valor != '0' && texto && texto !== 'SELECIONE' && texto !== 'SELECIONE...';
+                });
+                return validas.length > 0;
+            }""",
+            seletor,
+            timeout=timeout,
+        )
+        return True
+    except Exception:
+        return False
+
+
+def _destacar_necessidade_captcha(page, etapa: str):
+    """
+    Destaca visualmente a aba do MetaX para o usuÃ¡rio perceber que precisa
+    assumir o CAPTCHA naquele momento.
+    """
+    try:
+        page.bring_to_front()
+    except Exception:
+        pass
+
+    try:
+        page.evaluate(
+            """(etapa) => {
+                const previous = document.getElementById('metax-captcha-alert');
+                if (previous) previous.remove();
+
+                const overlay = document.createElement('div');
+                overlay.id = 'metax-captcha-alert';
+                overlay.innerHTML = `
+                    <div style="font-size:28px;font-weight:700;">ATENCAO</div>
+                    <div style="font-size:18px;margin-top:8px;">Resolva o CAPTCHA agora</div>
+                    <div style="font-size:14px;margin-top:6px;">${etapa}</div>
+                `;
+                overlay.style.cssText = `
+                    position: fixed;
+                    top: 16px;
+                    right: 16px;
+                    z-index: 2147483647;
+                    background: #c62828;
+                    color: #fff;
+                    border: 4px solid #ffeb3b;
+                    border-radius: 14px;
+                    box-shadow: 0 12px 32px rgba(0,0,0,.35);
+                    padding: 18px 22px;
+                    font-family: Arial, sans-serif;
+                    text-align: center;
+                    min-width: 320px;
+                    animation: metaxBlink 1s step-start 6;
+                `;
+
+                if (!document.getElementById('metax-captcha-style')) {
+                    const style = document.createElement('style');
+                    style.id = 'metax-captcha-style';
+                    style.textContent = `
+                        @keyframes metaxBlink {
+                            50% { transform: scale(1.04); filter: brightness(1.15); }
+                        }
+                    `;
+                    document.head.appendChild(style);
+                }
+
+                document.body.appendChild(overlay);
+                document.title = 'ATENCAO CAPTCHA - MetaX';
+            }""",
+            etapa,
+        )
+    except Exception:
+        pass
+
+    try:
+        import winsound
+        for _ in range(3):
+            winsound.Beep(1400, 250)
+    except Exception:
+        pass
+
+
+def _tentar_clicar_checkbox_recaptcha(page) -> bool:
+    """
+    Tenta um clique simples no checkbox do reCAPTCHA. Se abrir desafio, o
+    usuÃ¡rio assume manualmente.
+    """
+    try:
+        frame = page.frame_locator("iframe[title*='reCAPTCHA']").first
+        checkbox = frame.locator("#recaptcha-anchor")
+        checkbox.wait_for(state="visible", timeout=5000)
+        checkbox.click(timeout=5000)
+        logger.info("Clique semiautomatico no checkbox do CAPTCHA realizado.")
+        return True
+    except Exception as e:
+        logger.warn("Nao foi possivel clicar automaticamente no checkbox do CAPTCHA.", details={"erro": str(e)})
+        return False
+
+
+def _tentar_clicar_validar_captcha(page) -> bool:
+    """
+    Tenta clicar no botao Validar depois do checkbox. Se o CAPTCHA ainda estiver
+    pedindo imagens ou o botao nao estiver disponivel, o fluxo segue aguardando
+    acao manual do usuario.
+    """
+    seletores = [
+        "button:has-text('Validar')",
+        "input[value='Validar']",
+        "text=Validar",
+    ]
+    for seletor in seletores:
+        try:
+            botao = page.locator(seletor).first
+            if botao.count() == 0:
+                continue
+            botao.wait_for(state="visible", timeout=3000)
+            botao.click(timeout=3000)
+            logger.info("Clique semiautomatico no botao Validar realizado.", details={"seletor": seletor})
+            return True
+        except Exception:
+            continue
+
+    logger.warn("Nao foi possivel clicar automaticamente no botao Validar do CAPTCHA.")
+    return False
+
+
+def _aguardar_datatable_carregar(page, timeout: int = 8000) -> None:
+    """
+    Espera o DataTables terminar de carregar.
+    Sai assim que a tabela tiver linhas e o spinner de 'processing' sumir.
+    Muito mais eficiente do que wait_for_timeout com valor fixo.
+    """
+    try:
+        page.wait_for_function(
+            """() => {
+                const proc = document.querySelector('.dataTables_processing');
+                if (proc && window.getComputedStyle(proc).display !== 'none') return false;
+                const tbody = document.querySelector('table tbody');
+                return !!(tbody && tbody.children.length > 0);
+            }""",
+            timeout=timeout,
+        )
+    except Exception:
+        pass
 
 
 def anexar_foto(page, caminho_foto: str) -> None:
     """
-    Anexa a foto do funcionário no formulário do MetaX.
+    Anexa a foto do funcionÃ¡rio no formulÃ¡rio do MetaX.
     Realiza o redimensionamento antes do upload.
     
     Args:
-        page (Page): Objeto de página do Playwright.
+        page (Page): Objeto de pÃ¡gina do Playwright.
         caminho_foto (str): Caminho local para a foto original.
     """
     try:
         foto_reduzida = reduzir_foto_para_metax(caminho_foto)
 
         if not foto_reduzida:
-            logger.info("Foto ignorada (não compatível)", details={"path": caminho_foto})
+            logger.info("Foto ignorada (nÃ£o compatÃ­vel)", details={"path": caminho_foto})
             return
 
-        # Input de arquivo geralmente é hidden, então esperamos apenas estar anexado ao DOM
+        # Input de arquivo geralmente Ã© hidden, entÃ£o esperamos apenas estar anexado ao DOM
         page.wait_for_selector("#avatar", state="attached", timeout=TIMEOUT)
 
         page.set_input_files("#avatar", foto_reduzida)
@@ -58,7 +246,7 @@ def anexar_foto(page, caminho_foto: str) -> None:
 
         valor = page.locator("#avatar").input_value()
         
-        logger.info("Foto anexada ao formulário MetaX", details={"original_path": caminho_foto})
+        logger.info("Foto anexada ao formulÃ¡rio MetaX", details={"original_path": caminho_foto})
 
     except Exception as e:
         logger.warn(f"Falha ao anexar foto: {e}", details={"error": str(e)})
@@ -151,25 +339,19 @@ def selecionar_opcao_select(page, selector: str, value: str | None = None, label
 
 def selecionar_cargo_por_descricao(page, descricao_cargo: str) -> bool:
     """
-    Tenta selecionar um cargo no combo box buscando pela descrição parcial.
+    Tenta selecionar um cargo no combo box buscando pela descriÃ§Ã£o parcial.
     
     Args:
-        page (Page): Página do Playwright.
-        descricao_cargo (str): Descrição do cargo para busca.
+        page (Page): PÃ¡gina do Playwright.
+        descricao_cargo (str): DescriÃ§Ã£o do cargo para busca.
         
     Returns:
-        bool: True se encontrou e selecionou, False caso contrário.
+        bool: True se encontrou e selecionou, False caso contrÃ¡rio.
     """
     descricao_cargo = descricao_cargo.strip().upper()
 
-    page.wait_for_selector("#cargo", timeout=30000)
-    page.wait_for_function(
-        """() => {
-            const sel = document.querySelector('#cargo');
-            return sel && sel.options && sel.options.length > 1;
-        }""",
-        timeout=30000
-    )
+    _esperar_visivel(page, "#cargo", timeout=TIMEOUT_MEDIO)
+    _aguardar_combo_carregado(page, "#cargo", timeout=5000)
 
     select = page.locator("#cargo")
     opcoes = select.locator("option")
@@ -180,14 +362,13 @@ def selecionar_cargo_por_descricao(page, descricao_cargo: str) -> bool:
         if texto_opcao.startswith(descricao_cargo):
             valor = opcoes.nth(i).get_attribute("value")
             page.select_option("#cargo", value=valor)
-            page.locator("#cargo").press("Tab")
             logger.info(f"Cargo selecionado: {texto_opcao}", details={"cargo": texto_opcao})
             return True
 
-    # Se chegou aqui, não encontrou match exato/startswith
+    # Se chegou aqui, nÃ£o encontrou match exato/startswith
     
-    # 1. Tentar match parcial (contém) REVERSO (Verificar se PALAVRA CHAVE está na opção)
-    # Ex: RM="MOTORISTA PESADO", Opcao="MOTORISTA" -> "MOTORISTA" in "MOTORISTA PESADO"? Não.
+    # 1. Tentar match parcial (contÃ©m) REVERSO (Verificar se PALAVRA CHAVE estÃ¡ na opÃ§Ã£o)
+    # Ex: RM="MOTORISTA PESADO", Opcao="MOTORISTA" -> "MOTORISTA" in "MOTORISTA PESADO"? NÃ£o.
     # Ex: RM="MOTORISTA PESADO", Opcao="MOTORISTA" -> "MOTORISTA" in "MOTORISTA"? Sim.
     
     palavras_chave = descricao_cargo.split()
@@ -205,7 +386,6 @@ def selecionar_cargo_por_descricao(page, descricao_cargo: str) -> bool:
             if len(matches) == 1:
                 valor, texto_opcao = matches[0]
                 page.select_option("#cargo", value=valor)
-                page.locator("#cargo").press("Tab")
                 logger.info(
                     f"Cargo selecionado (Match Palavra-Chave '{primeira_palavra}'): {texto_opcao}",
                     details={"alvo": descricao_cargo, "selecionado": texto_opcao},
@@ -217,7 +397,7 @@ def selecionar_cargo_por_descricao(page, descricao_cargo: str) -> bool:
                     details={"palavra_chave": primeira_palavra, "matches": [m[1] for m in matches]},
                 )
              
-    # 2. Logar opções disponíveis para debug
+    # 2. Logar opÃ§Ãµes disponÃ­veis para debug
     lista_opcoes = []
     for i in range(opcoes.count()):
         lista_opcoes.append(opcoes.nth(i).inner_text().upper())
@@ -226,7 +406,7 @@ def selecionar_cargo_por_descricao(page, descricao_cargo: str) -> bool:
     # Converte lista para string para aparecer no log de console
     # REMOVIDO LIMITE DE 30 PARA DEBUG TOTAL
     opcoes_str = "; ".join(lista_opcoes) 
-    logger.warn(f"Cargo '{descricao_cargo}' não encontrado. Opções disponíveis: [{opcoes_str}]", details={"opcoes": lista_opcoes})
+    logger.warn(f"Cargo '{descricao_cargo}' nÃ£o encontrado. OpÃ§Ãµes disponÃ­veis: [{opcoes_str}]", details={"opcoes": lista_opcoes})
 
     return False
 
@@ -239,7 +419,7 @@ def _aplicar_override_contrato(descricao: str, contrato_chave: str | None) -> st
 
 
 # ==============================================================================
-# NOVA FUNÇÃO DE INÍCIO DE SESSÃO (Retorna p, browser, page)
+# NOVA FUNÃ‡ÃƒO DE INÃCIO DE SESSÃƒO (Retorna p, browser, page)
 # ==============================================================================
 def _listar_opcoes_contrato(page) -> list[dict]:
     return page.evaluate(
@@ -310,14 +490,11 @@ def _selecionar_contrato(page, contrato_value: str | None, contrato_label: str |
 
 def iniciar_sessao(headless: bool = False, contrato_value: str | None = None, contrato_label: str | None = None):
     """
-    Inicia o browser, realiza login e navega até a tela inicial do sistema.
-    
+    Inicia o browser, realiza login e navega ate a tela inicial do sistema.
+
     Returns:
         tuple: (playwright_instance, browser_instance, page_instance)
     """
-    # Inicia o Playwright, mas NÃO fecha (quem fecha é o main)
-    # Obs: sync_playwright() deve ser usado com contexto. 
-    # Para ser persistente, chamamos .start() manualmente
     p = sync_playwright().start()
     try:
         browser = p.chromium.launch(channel="chrome", headless=headless)
@@ -329,24 +506,25 @@ def iniciar_sessao(headless: bool = False, contrato_value: str | None = None, co
     page = context.new_page()
 
     try:
-        logger.info("Acessando a página de login...")
+        logger.info("Acessando a pagina de login...")
         page.goto(METAX_URL_LOGIN, timeout=TIMEOUT, wait_until="domcontentloaded")
-        # LOGIN
         page.wait_for_selector('#txtLogin', timeout=TIMEOUT)
         page.fill('#txtLogin', METAX_LOGIN)
         page.wait_for_selector('#txtSenha', timeout=TIMEOUT)
-        page.fill('#txtSenha', METAX_PASSWORD)        
-        logger.info("ACAO NECESSARIA: Resolva o CAPTCHA e clique em 'Validar' MANUALMENTE.")
-        logger.info("Aguardando você acessar a próxima tela...")
-        
-        # Removemos o wait_for_timeout fixo e o click automático 
-        # para que o script avance assim que o usuário validar.
-        # page.wait_for_timeout(TEMPO_CAPTCHA_MS)
-        # page.click('button:has-text("Validar")')
+        page.fill('#txtSenha', METAX_PASSWORD)
+
+        _destacar_necessidade_captcha(
+            page,
+            "O robo vai tentar clicar no quadradinho. Se abrir desafio de imagens, resolva manualmente.",
+        )
+        logger.warn("ATENCAO: CAPTCHA em modo semiautomatico. Verifique a janela do MetaX agora.")
+        clicou_checkbox = _tentar_clicar_checkbox_recaptcha(page)
+        if clicou_checkbox:
+            page.wait_for_timeout(800)
+            _tentar_clicar_validar_captcha(page)
+        logger.info("Aguardando liberacao do CAPTCHA e acesso a proxima tela...")
 
         page.wait_for_selector('#comboContrato', state='visible', timeout=TEMPO_CAPTCHA_MS)
-
-        # Espera as opções carregarem
         page.wait_for_function(
             """() => {
                 const sel = document.querySelector('#comboContrato');
@@ -356,8 +534,6 @@ def iniciar_sessao(headless: bool = False, contrato_value: str | None = None, co
         )
 
         _selecionar_contrato(page, contrato_value, contrato_label)
-
-        # força o evento de change (importante nesse sistema)
         page.evaluate("""
             const select = document.querySelector('#comboContrato');
             select.dispatchEvent(new Event('change', { bubbles: true }));
@@ -365,13 +541,11 @@ def iniciar_sessao(headless: bool = False, contrato_value: str | None = None, co
 
         page.wait_for_selector('button:has-text("Continuar"):not([disabled])', timeout=TIMEOUT)
         page.click('button:has-text("Continuar")')
-
-        page.wait_for_selector('text=Termo de confirmação', timeout=TIMEOUT)
+        page.wait_for_selector('text=Termo de confirma', timeout=TIMEOUT)
         page.click('text=Li e Aceito os termos de compromisso')
+        page.wait_for_selector('text=Termo de confirma', state="hidden", timeout=TIMEOUT)
+        logger.info("Login concluido com sucesso!")
 
-        page.wait_for_selector('text=Termo de confirmação', state="hidden", timeout=TIMEOUT)
-        logger.info("Login concluído com sucesso!")
-        
         return p, browser, page
 
     except Exception as e:
@@ -381,15 +555,15 @@ def iniciar_sessao(headless: bool = False, contrato_value: str | None = None, co
         raise e
 
 # ==============================================================================
-# FUNÇÃO DE CADASTRO (Recebe page logada)
+# FUNÃ‡ÃƒO DE CADASTRO (Recebe page logada)
 # ==============================================================================
 def obter_todos_rascunhos(page) -> set[str]:
     """
     Navega para a lista de credenciamento e coleta TODOS os CPFs cadastrados (Rascunhos).
-    Gerencia paginação e exibição de 100 itens.
+    Gerencia paginaÃ§Ã£o e exibiÃ§Ã£o de 100 itens.
     
     Returns:
-        set: Conjunto de CPFs (apenas números) encontrados.
+        set: Conjunto de CPFs (apenas nÃºmeros) encontrados.
     """
     logger.info("Buscando lista de rascunhos existentes...")
     cpfs_encontrados = set()
@@ -398,16 +572,16 @@ def obter_todos_rascunhos(page) -> set[str]:
     if not "CredenciamentoLista" in page.url:
         page.goto("https://portal.metax.ind.br/CredenciamentoLista/Index", timeout=30000)
     
-    # 2. Mudar exibição para 100 (se existir)
+    # 2. Mudar exibiÃ§Ã£o para 100 (se existir)
     try:
-        # Tenta selecionar '100' no dropdown de registros (name geralmente é '...length')
-        # Selector genérico para o select de paginação
+        # Tenta selecionar '100' no dropdown de registros (name geralmente Ã© '...length')
+        # Selector genÃ©rico para o select de paginaÃ§Ã£o
         select_paginacao = page.locator("select[name*='length']")
         if select_paginacao.count() > 0:
             select_paginacao.select_option(value="100")
             page.wait_for_timeout(1000) # Espera tabela recarregar
     except Exception as e:
-        logger.warn(f"Não conseguiu mudar paginação para 100: {e}")
+        logger.warn(f"NÃ£o conseguiu mudar paginaÃ§Ã£o para 100: {e}")
 
     # 3. Limpar filtros
     try:
@@ -416,39 +590,39 @@ def obter_todos_rascunhos(page) -> set[str]:
     except:
         pass
 
-    # 4. FILTRAR POR RASCUNHO (Pedido crítico do usuário)
+    # 4. FILTRAR POR RASCUNHO (Pedido crÃ­tico do usuÃ¡rio)
     filtro_aplicado = False
     try:
         logger.info("Aplicando filtro de Status: Rascunho...")
         
         # Tenta selecionar pelo label "Status:"
-        # O seletor pode variar, vamos tentar encontrar o select próximo ao label Status
-        # Opção A: Pelo ID se fosse conhecido, mas vamos por proximidade ou nome comum
-        # Geralmente em grids assim é name="Status" ou id="Status"
+        # O seletor pode variar, vamos tentar encontrar o select prÃ³ximo ao label Status
+        # OpÃ§Ã£o A: Pelo ID se fosse conhecido, mas vamos por proximidade ou nome comum
+        # Geralmente em grids assim Ã© name="Status" ou id="Status"
         
-        # Estratégia: Encontrar o campo de seleção.
-        # Vamos tentar um seletor genérico que costuma funcionar nesses forms
-        # Dropdown que tem opção "Rascunho"
+        # EstratÃ©gia: Encontrar o campo de seleÃ§Ã£o.
+        # Vamos tentar um seletor genÃ©rico que costuma funcionar nesses forms
+        # Dropdown que tem opÃ§Ã£o "Rascunho"
         select_status = page.locator("select").filter(has_text="Rascunho").first
         
         if select_status.count() > 0:
             select_status.select_option(label="Rascunho")
             filtro_aplicado = True
         else:
-            # Fallback forçado: tentar achar o select associado ao label
-            # Assumindo layout padrão onde o label está antes ou acima
+            # Fallback forÃ§ado: tentar achar o select associado ao label
+            # Assumindo layout padrÃ£o onde o label estÃ¡ antes ou acima
             try:
                 page.locator("text=Status").locator("..").locator("select").first.select_option(label="Rascunho")
                 filtro_aplicado = True
             except:
-                logger.warn("Não foi possível encontrar o campo de Status para filtrar")
+                logger.warn("NÃ£o foi possÃ­vel encontrar o campo de Status para filtrar")
 
         if filtro_aplicado:
             page.wait_for_timeout(500)
             
             # Clicar em Pesquisar
             page.click("text=Pesquisar")
-            logger.info("Botão Pesquisar clicado.")
+            logger.info("BotÃ£o Pesquisar clicado.")
             
             # Esperar recarregamento
             page.wait_for_timeout(2000)
@@ -461,17 +635,17 @@ def obter_todos_rascunhos(page) -> set[str]:
     # Garantir que a tabela carregou (espera header ou loading sumir)
     try:
         page.wait_for_selector("table tbody", timeout=10000)
-        # Espera um pouco mais para garantir renderização das linhas
+        # Espera um pouco mais para garantir renderizaÃ§Ã£o das linhas
         page.wait_for_timeout(2000)
     except Exception as e:
         logger.warn(f"Tabela de rascunhos demorou a carregar: {e}")
 
-    # 4. Loop de Paginação
+    # 4. Loop de PaginaÃ§Ã£o
     while True:
-        # Coleta CPFs da página atual
-        # Assume que CPF é a 2ª coluna (index 1) - Ajuste conforme HTML real
-        # Pelas imagens: Ações | CPF | Passaporte | Nome...
-        # Então CPF é td:nth-child(2)
+        # Coleta CPFs da pÃ¡gina atual
+        # Assume que CPF Ã© a 2Âª coluna (index 1) - Ajuste conforme HTML real
+        # Pelas imagens: AÃ§Ãµes | CPF | Passaporte | Nome...
+        # EntÃ£o CPF Ã© td:nth-child(2)
         
         linhas = page.locator("table tbody tr")
         count = linhas.count()
@@ -479,35 +653,35 @@ def obter_todos_rascunhos(page) -> set[str]:
         if count == 0:
             break
             
-        # Verifica se é linha de "Nenhum registro"
+        # Verifica se Ã© linha de "Nenhum registro"
         texto_primeira = linhas.first.inner_text()
         if "Nenhum registro" in texto_primeira:
             break
 
-        # Extrai CPFs da página
+        # Extrai CPFs da pÃ¡gina
         elementos_cpf = page.locator("table tbody tr td:nth-child(2)").all_inner_texts()
         
         cpfs_pagina = 0
         for texto in elementos_cpf:
             cpf_limpo = ''.join(filter(str.isdigit, texto))
-            # Valida se tem 11 dígitos (CPF válido)
+            # Valida se tem 11 dÃ­gitos (CPF vÃ¡lido)
             if cpf_limpo and len(cpf_limpo) == 11:
                 cpfs_encontrados.add(cpf_limpo)
                 cpfs_pagina += 1
             elif cpf_limpo and len(cpf_limpo) > 0:
-                # Log de CPF inválido para debug
-                logger.warn(f"CPF inválido encontrado na lista (não tem 11 dígitos): {cpf_limpo}", details={"cpf": cpf_limpo, "tamanho": len(cpf_limpo)})
+                # Log de CPF invÃ¡lido para debug
+                logger.warn(f"CPF invÃ¡lido encontrado na lista (nÃ£o tem 11 dÃ­gitos): {cpf_limpo}", details={"cpf": cpf_limpo, "tamanho": len(cpf_limpo)})
 
-        logger.info(f"Coletados {cpfs_pagina} CPFs válidos nesta página. Total acumulado: {len(cpfs_encontrados)}")
+        logger.info(f"Coletados {cpfs_pagina} CPFs vÃ¡lidos nesta pÃ¡gina. Total acumulado: {len(cpfs_encontrados)}")
 
-        # Verifica botão Próximo
+        # Verifica botÃ£o PrÃ³ximo
         # Geralmente classe 'paginate_button next'
         # Se tiver classe 'disabled', paramos.
         
         btn_proximo = page.locator("li.paginate_button.next")
         if btn_proximo.count() == 0:
             # Tenta outro seletor comum
-            btn_proximo = page.locator("a:has-text('Próximo')")
+            btn_proximo = page.locator("a:has-text('PrÃ³ximo')")
             
         if btn_proximo.count() > 0:
             classe_btn = btn_proximo.get_attribute("class") or ""
@@ -516,21 +690,21 @@ def obter_todos_rascunhos(page) -> set[str]:
                 # Espera a tabela recarregar antes de continuar
                 try:
                     page.wait_for_selector("table tbody tr", timeout=5000)
-                    page.wait_for_timeout(1000)  # Espera adicional para garantir renderização
+                    page.wait_for_timeout(1000)  # Espera adicional para garantir renderizaÃ§Ã£o
                 except Exception as e:
-                    logger.warn(f"Tabela não recarregou após mudar de página: {e}")
+                    logger.warn(f"Tabela nÃ£o recarregou apÃ³s mudar de pÃ¡gina: {e}")
                     # Tenta continuar mesmo assim
             else:
                  break
         else:
-            break # Fim das páginas
+            break # Fim das pÃ¡ginas
 
     logger.info(f"Total de rascunhos mapeados: {len(cpfs_encontrados)}")
     return cpfs_encontrados
 
 def navegar_para_cadastro(page) -> bool:
     """
-    Navega do menu inicial até a tela de cadastro.
+    Navega do menu inicial atÃ© a tela de cadastro.
     """
     
     # 1. Tenta limpar qualquer modal que esteja na frente (Sucesso/Erro anterior)
@@ -556,45 +730,41 @@ def navegar_para_cadastro(page) -> bool:
             logger.info("Tentando navegar via URL direta para a lista...")
             page.goto("https://portal.metax.ind.br/CredenciamentoLista/Index", timeout=30000)
 
-    # 3. Clica no botão "CADASTRO"
+    # 3. Clica no botÃ£o "CADASTRO"
     try:
-        logger.info("Procurando botão CADASTRO...")
+        logger.info("Procurando botÃ£o CADASTRO...")
         page.wait_for_selector("text=CADASTRO", timeout=10000)
         page.click("text=CADASTRO")
         return True
     except:
-        logger.warn("Botão CADASTRO por texto falhou, tentando seletor href...")
+        logger.warn("BotÃ£o CADASTRO por texto falhou, tentando seletor href...")
         page.click('a[href*="/Credenciamento/Index"]')
         return True
 
 
 def preencher_dados_pessoais(page, funcionario: dict) -> None:
-    """Preenche a aba de dados pessoais do funcionário."""
+    """Preenche a aba de dados pessoais do funcionÃ¡rio."""
     nome = funcionario["NOME"]
     nome_pai = funcionario.get("NOME_PAI", "")
     nome_mae = funcionario.get("NOME_MAE", "")
     cpf = funcionario["CPF"]
 
-    page.wait_for_selector('#nome', timeout=TIMEOUT)
-    page.fill('#nome', nome)
+    _preencher_campo_rapido(page, '#nome', nome)
 
     # APELIDO (Obrigatorio)
     apelido = nome.split()[0]
     
-    page.wait_for_selector('#apelido', timeout=TIMEOUT)
+    _esperar_visivel(page, '#apelido')
     page.evaluate("document.querySelector('#apelido').removeAttribute('disabled')")
-    page.fill('#apelido', apelido)
+    _preencher_campo_rapido(page, '#apelido', apelido)
 
-    page.wait_for_selector('#nomePai', timeout=TIMEOUT)
-    page.fill('#nomePai', nome_pai)
+    _preencher_campo_rapido(page, '#nomePai', nome_pai)
 
-    page.wait_for_selector('#nomeMae', timeout=TIMEOUT)
-    page.fill('#nomeMae', nome_mae)
+    _preencher_campo_rapido(page, '#nomeMae', nome_mae)
 
     cpf_formatado = formatar_cpf(cpf)
 
-    page.wait_for_selector('#cpf', timeout=TIMEOUT)
-    page.fill('#cpf', cpf_formatado)
+    _preencher_campo_rapido(page, '#cpf', cpf_formatado)
 
     # ESCOLARIDADE
     codigo_rm = funcionario.get("GRAUINSTRUCAO")
@@ -604,7 +774,7 @@ def preencher_dados_pessoais(page, funcionario: dict) -> None:
         valor_escolaridade = MAPA_ESCOLARIDADE.get(codigo_rm)
 
     if valor_escolaridade:
-        page.wait_for_selector('#escolaridade', timeout=TIMEOUT)
+        _esperar_visivel(page, '#escolaridade')
         if not selecionar_opcao_select(page, '#escolaridade', value=valor_escolaridade, label=valor_escolaridade):
             logger.warn(
                 "Escolaridade nao encontrada no combo do MetaX.",
@@ -613,8 +783,8 @@ def preencher_dados_pessoais(page, funcionario: dict) -> None:
             if selecionar_opcao_select(page, '#escolaridade', value="Outros", label="Outros"):
                 logger.warn("Fallback de escolaridade aplicado: Outros.", details={"codigo_rm": codigo_rm})
     else:
-        logger.warn(f"Escolaridade não mapeada: {codigo_rm}", details={"codigo_rm": codigo_rm})
-        page.wait_for_selector('#escolaridade', timeout=TIMEOUT)
+        logger.warn(f"Escolaridade nÃ£o mapeada: {codigo_rm}", details={"codigo_rm": codigo_rm})
+        _esperar_visivel(page, '#escolaridade')
         if selecionar_opcao_select(page, '#escolaridade', value="Outros", label="Outros"):
             logger.warn("Fallback de escolaridade aplicado para codigo nao mapeado.", details={"codigo_rm": codigo_rm})
 
@@ -626,14 +796,19 @@ def preencher_dados_pessoais(page, funcionario: dict) -> None:
         valor_est_civil = MAPA_ESTADO_CIVIL.get(codigo_ec)
 
     if valor_est_civil:
-        page.wait_for_selector('#estCivil', timeout=TIMEOUT)
+        _esperar_visivel(page, '#estCivil')
         if not selecionar_opcao_select(page, '#estCivil', value=valor_est_civil, label=valor_est_civil):
             logger.warn(
                 "Estado civil nao encontrado no combo do MetaX.",
                 details={"codigo_rm": codigo_ec, "valor": valor_est_civil},
             )
+            # Fallback: tenta "Casado" como aproximacao para codigos nao mapeados (ex: Uniao Estavel)
+            if selecionar_opcao_select(page, '#estCivil', label="Casado"):
+                logger.warn("Fallback de estado civil aplicado: Casado.", details={"codigo_rm": codigo_ec})
+            else:
+                logger.warn("Fallback de estado civil tambem falhou.", details={"codigo_rm": codigo_ec})
     else:
-        logger.warn(f"Estado civil não mapeado: {codigo_ec}", details={"codigo_ec": codigo_ec})
+        logger.warn(f"Estado civil nÃ£o mapeado: {codigo_ec}", details={"codigo_ec": codigo_ec})
 
     # ESTADO DE NASCIMENTO
     estado_natal_rm = funcionario.get("ESTADONATAL")
@@ -643,33 +818,27 @@ def preencher_dados_pessoais(page, funcionario: dict) -> None:
         valor_estado_natal = MAPA_ESTADO_NATAL.get(estado_natal_rm)
 
     if valor_estado_natal:
-        page.wait_for_selector('#estNasc', timeout=TIMEOUT)
+        _esperar_visivel(page, '#estNasc')
         page.select_option('#estNasc', value=valor_estado_natal)
     else:
-        logger.warn(f"Estado natal não mapeado: {estado_natal_rm}", details={"uf": estado_natal_rm})
+        logger.warn(f"Estado natal nÃ£o mapeado: {estado_natal_rm}", details={"uf": estado_natal_rm})
 
     # PIS / PASEP
     pis_rm = funcionario.get("PISPASEP")
     pis_formatado = formatar_pis(pis_rm)
 
     if pis_formatado:
-        page.wait_for_selector('#pisPasep', timeout=TIMEOUT)
-        page.fill('#pisPasep', pis_formatado)
+        _preencher_campo_rapido(page, '#pisPasep', pis_formatado)
 
     # CIDADE DE NASCIMENTO
     cidade_rm = funcionario.get("NATURALIDADE")
     if cidade_rm:
         cidade_rm_norm = normalizar_texto(cidade_rm)
-        page.wait_for_selector('#cidNasc', timeout=TIMEOUT)
+        _esperar_visivel(page, '#cidNasc')
         logger.info("Aguardando carregamento de cidades...")
         try:
-            page.wait_for_function(
-                """() => {
-                    const sel = document.querySelector('#cidNasc');
-                    return sel && sel.options && sel.options.length > 1;
-                }""",
-                timeout=15000,
-            )
+            if not _aguardar_combo_carregado(page, '#cidNasc', timeout=TIMEOUT_MEDIO):
+                raise PlaywrightTimeoutError("Combo de cidade de nascimento nao carregou a tempo.")
         except Exception as e:
             logger.warn(
                 "Lista de cidades nao carregou a tempo. Pulando selecao de cidade.",
@@ -749,7 +918,7 @@ def preencher_dados_pessoais(page, funcionario: dict) -> None:
                 details={"codigo_rm": sexo_rm, "valor": valor_sexo},
             )
     else:
-        logger.warn(f"Sexo inválido ou não mapeado: {sexo_rm}", details={"sexo": sexo_rm})
+        logger.warn(f"Sexo invÃ¡lido ou nÃ£o mapeado: {sexo_rm}", details={"sexo": sexo_rm})
 
     # EMAIL    
     email = funcionario.get("EMAIL", "")
@@ -767,7 +936,7 @@ def preencher_dados_pessoais(page, funcionario: dict) -> None:
         campo_tel.fill("")  
         campo_tel.type(telefone_formatado, delay=50)
     else:
-        logger.warn(f"Telefone emergencial inválido ou vazio: {telefone_rm}", details={"fone": telefone_rm})
+        logger.warn(f"Telefone emergencial invÃ¡lido ou vazio: {telefone_rm}", details={"fone": telefone_rm})
 
 
 def preencher_documentos(page, funcionario: dict) -> None:
@@ -794,20 +963,20 @@ def preencher_documentos(page, funcionario: dict) -> None:
         page.wait_for_selector('#ufRG', timeout=TIMEOUT)
         page.select_option('#ufRG', value=valor_uf_rg)
     else:
-        logger.warn(f"UF do RG não mapeada ou vazia: {uf_rg_rm}", details={"uf": uf_rg_rm})
+        logger.warn(f"UF do RG nÃ£o mapeada ou vazia: {uf_rg_rm}", details={"uf": uf_rg_rm})
     
     # NUMERO RG
     page.wait_for_selector('#numRG', timeout=TIMEOUT)
     page.fill('#numRG', numerorg)
 
     # EMISSAO RG
-    # Validação de data no futuro
+    # ValidaÃ§Ã£o de data no futuro
     if isinstance(dataemissao, (date, datetime)):
-       # Garante que temos apenas DATA para comparação
+       # Garante que temos apenas DATA para comparaÃ§Ã£o
        data_obj = dataemissao.date() if isinstance(dataemissao, datetime) else dataemissao
         
        if data_obj > datetime.now().date():
-           logger.warn(f"Data de emissão do RG no futuro ({dataemissao}). Ajustando para HOJE.", details={"original": str(dataemissao)})
+           logger.warn(f"Data de emissÃ£o do RG no futuro ({dataemissao}). Ajustando para HOJE.", details={"original": str(dataemissao)})
            dataemissao = datetime.now()
            
     elif isinstance(dataemissao, str):
@@ -815,7 +984,7 @@ def preencher_documentos(page, funcionario: dict) -> None:
            # Tenta converter para verificar
            dt_obj = datetime.strptime(dataemissao, "%Y-%m-%d").date()
            if dt_obj > datetime.now().date():
-                logger.warn(f"Data de emissão do RG no futuro ({dataemissao}). Ajustando para HOJE.", details={"original": dataemissao})
+                logger.warn(f"Data de emissÃ£o do RG no futuro ({dataemissao}). Ajustando para HOJE.", details={"original": dataemissao})
                 dataemissao = datetime.now()
        except:
            pass
@@ -825,7 +994,7 @@ def preencher_documentos(page, funcionario: dict) -> None:
         page.wait_for_selector('#dtEmissaoRG', timeout=TIMEOUT)
         page.fill('#dtEmissaoRG', dataemissao)
     else:
-        logger.warn("Data de emissão do RG vazia")
+        logger.warn("Data de emissÃ£o do RG vazia")
 
     # CTPS DIGITAL
     page.wait_for_selector('#cmbCTPSDigital', timeout=TIMEOUT)
@@ -850,7 +1019,7 @@ def preencher_documentos(page, funcionario: dict) -> None:
         page.wait_for_selector('#ufCTPS', timeout=TIMEOUT)
         page.select_option('#ufCTPS', value=valor_estado)
     else:
-        logger.warn(f"Estado natal não mapeado: {estadocpts}", details={"uf": estadocpts})
+        logger.warn(f"Estado natal nÃ£o mapeado: {estadocpts}", details={"uf": estadocpts})
     
     # DATA CTPS
     data_formatada_cpts = formatar_data(datacpts)
@@ -862,7 +1031,7 @@ def preencher_documentos(page, funcionario: dict) -> None:
 
 
 def preencher_endereco(page, funcionario: dict) -> None:
-    """Preenche endereço e tenta buscar via CEP."""
+    """Preenche endereÃ§o e tenta buscar via CEP."""
     CEP_FALLBACK = "79582034"
     UF_FALLBACK = "MS"
     CIDADE_FALLBACK = "CHAPADAO DO SUL"
@@ -1031,7 +1200,7 @@ def preencher_endereco(page, funcionario: dict) -> None:
 
     endereconumero = _normalizar_numero(endereconumero)
 
-    page.wait_for_selector('a[href="#menu1"]', timeout=TIMEOUT)
+    _esperar_visivel(page, 'a[href="#menu1"]')
     page.click('a[href="#menu1"]')
 
     def preencher_e_buscar_cep(cep_tentativa):
@@ -1071,7 +1240,7 @@ def preencher_endereco(page, funcionario: dict) -> None:
         # Nuke Modals antes de clicar
         fechar_modais_bloqueantes(page)
             
-        page.wait_for_selector("#btnPesquisarCep", state="visible")
+        _esperar_visivel(page, "#btnPesquisarCep")
         
         # Tenta clicar com force=True para ignorar overlays transparentes
         try:
@@ -1082,7 +1251,7 @@ def preencher_endereco(page, funcionario: dict) -> None:
 
         # Se o portal retornar modal de erro imediatamente, nao faz espera longa
         try:
-            page.wait_for_timeout(800)
+            page.wait_for_timeout(350)
             modal = page.locator("div.bootbox.modal:visible")
             if modal.count() > 0:
                 textos = []
@@ -1102,8 +1271,6 @@ def preencher_endereco(page, funcionario: dict) -> None:
                 return
         except Exception:
             pass
-
-        page.wait_for_timeout(3000)
 
         for tentativa in range(2):
             try:
@@ -1125,7 +1292,7 @@ def preencher_endereco(page, funcionario: dict) -> None:
                     const cidadeOk = cidadeSel && (cidadeSel.options || []).length > 1;
 
                     return bairroOk || logOk || cidadeOk;
-                }""", timeout=20000)
+                }""", timeout=6000 if tentativa == 0 else 9000)
                 break
             except Exception as e:
                 if tentativa == 0:
@@ -1137,7 +1304,7 @@ def preencher_endereco(page, funcionario: dict) -> None:
                         page.locator("#btnPesquisarCep").click(force=True)
                     except Exception:
                         page.evaluate("document.getElementById('btnPesquisarCep').click()")
-                    page.wait_for_timeout(1500)
+                    page.wait_for_timeout(700)
                     continue
                 logger.warn("CEP: resposta nao carregou a tempo", details={"cep": cep_formatado, "error": str(e)})
 
@@ -1172,7 +1339,7 @@ def preencher_endereco(page, funcionario: dict) -> None:
         snap_cep = _snapshot_endereco("apos_bairro_rm")
 
     if not _cep_parece_valido(snap_cep):
-        logger.warn(f"CEP {cep} não encontrou endereço. Tentando fallback...", details={"cep": cep})
+        logger.warn(f"CEP {cep} nÃ£o encontrou endereÃ§o. Tentando fallback...", details={"cep": cep})
 
         # Fallback fixo (orientacao MetaX)
         preencher_e_buscar_cep(CEP_FALLBACK) # CEP Generico (MS) - Chapadao
@@ -1189,7 +1356,7 @@ def preencher_endereco(page, funcionario: dict) -> None:
     estado_metax = page.locator("#comboEstado")
     estado_valor_atual = estado_metax.input_value().strip()
 
-    # Só altera o estado se NÃO usamos fallback. Se usou fallback, respeita o estado do CEP válido (ex: DF)
+    # SÃ³ altera o estado se NÃƒO usamos fallback. Se usou fallback, respeita o estado do CEP vÃ¡lido (ex: DF)
     # exceto se o estado estiver vazio (falha no preenchimento automatico)
     if not fallback_usado:
         if estado_rm in MAPA_ESTADO_NATAL and MAPA_ESTADO_NATAL[estado_rm] != estado_valor_atual:
@@ -1329,37 +1496,36 @@ def preencher_endereco(page, funcionario: dict) -> None:
     campo_num.type(str(endereconumero), delay=80)
     campo_num.press("Tab")
 
-    logger.info(f"Número do endereço preenchido: {endereconumero}", details={"numero": endereconumero})
+    logger.info(f"NÃºmero do endereÃ§o preenchido: {endereconumero}", details={"numero": endereconumero})
 
     snap_final = _snapshot_endereco("final_endereco")
     logger.info("Endereco snapshot final", details=snap_final)
 
 
 def preencher_dados_profissionais(page, funcionario: dict, contrato_chave: str | None = None) -> bool:
-    """Preenche dados profissionais (Cargo, Salário) e seleciona o cargo."""
+    """Preenche dados profissionais (Cargo, SalÃ¡rio) e seleciona o cargo."""
     dataadmissao = funcionario.get("DATAADMISSAO", "")
     salario = funcionario.get("SALARIO", "")
 
-    page.wait_for_selector('a[href="#menuProfissional"]', timeout=TIMEOUT)
+    _esperar_visivel(page, 'a[href="#menuProfissional"]')
     page.click('a[href="#menuProfissional"]')
 
     # DATA ADMISSAO
     data_formatada_admissao = formatar_data(dataadmissao)
     if data_formatada_admissao:
-        page.wait_for_selector('#dtAdmissao', timeout=TIMEOUT)
-        page.fill('#dtAdmissao', data_formatada_admissao)
+        _preencher_campo_rapido(page, '#dtAdmissao', data_formatada_admissao)
     else:
         logger.warn("Data de admissao vazia")
 
     campo = page.locator('#salario')
-    campo.wait_for(state="visible", timeout=TIMEOUT)
+    campo.wait_for(state="visible", timeout=TIMEOUT_CURTO)
     campo.click()
     campo.press("Control+A")
     campo.press("Backspace")
-    campo.type(str(salario), delay=50)
+    campo.type(str(salario), delay=20)
     campo.press("Tab")
     
-    page.wait_for_selector('#horMens', timeout=TIMEOUT)
+    _esperar_visivel(page, '#horMens')
     page.select_option('#horMens', value='2')
 
     descricao_rm = funcionario["DESCRICAO_CARGO"].strip().upper()
@@ -1422,9 +1588,11 @@ def preencher_dados_profissionais(page, funcionario: dict, contrato_chave: str |
         )
         return False
 
-    # FORÇAR BLUR
-    page.locator("#cargo").press("Tab")
-    page.wait_for_timeout(500)
+    # FORÃ‡AR BLUR
+    try:
+        page.locator("#cargo").press("Tab")
+    except Exception:
+        pass
     return True
 
 
@@ -1533,16 +1701,22 @@ def salvar_cadastro(page, cpf: str, output_manager: OutputManager) -> dict:
 
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         filename = f"erro_salvar_{cpf}_{timestamp}__{output_manager.execution_id}.png"
-        data = page.screenshot()
-        output_manager.save_screenshot_bytes(filename, data)
+        try:
+            data = _capturar_screenshot_seguro(page)
+            output_manager.save_screenshot_bytes(filename, data)
+        except Exception as screenshot_error:
+            logger.warn("Falha ao gerar screenshot apos timeout ao salvar", details={"erro": str(screenshot_error)})
         return {"attempted": True, "saved": False, "error": "Timeout ao salvar rascunho.", "detail": ""}
 
     except Exception as e:
         logger.error(f"Falha ao salvar rascunho: {e}", details={"error": str(e)})
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         filename = f"erro_excecao_salvar_{cpf}_{timestamp}__{output_manager.execution_id}.png"
-        data = page.screenshot()
-        output_manager.save_screenshot_bytes(filename, data)
+        try:
+            data = _capturar_screenshot_seguro(page)
+            output_manager.save_screenshot_bytes(filename, data)
+        except Exception as screenshot_error:
+            logger.warn("Falha ao gerar screenshot apos excecao ao salvar", details={"erro": str(screenshot_error)})
         return {"attempted": True, "saved": False, "error": str(e), "detail": ""}
 
 
@@ -1676,12 +1850,12 @@ def verificar_cadastro(page, funcionario: dict, output_manager: OutputManager, m
     """
     try:
         cpf = funcionario.get("CPF")
-        cpf_limpo = "".join(filter(str.isdigit, str(cpf)))
+        cpf_limpo = _somente_digitos(cpf)
         if not cpf_limpo:
             return False, "CPF invalido para verificacao."
 
         if "CredenciamentoLista" not in page.url:
-            page.goto("https://portal.metax.ind.br/CredenciamentoLista/Index", timeout=30000)
+            page.goto("https://portal.metax.ind.br/CredenciamentoLista/Index", timeout=30000, wait_until="domcontentloaded")
 
         # Aplica filtro de Status: Rascunho (mesma estrategia do fluxo principal)
         filtro_aplicado = False
@@ -1695,9 +1869,8 @@ def verificar_cadastro(page, funcionario: dict, output_manager: OutputManager, m
                 filtro_aplicado = True
 
             if filtro_aplicado:
-                page.wait_for_timeout(500)
                 page.click("text=Pesquisar")
-                page.wait_for_timeout(1500)
+                _aguardar_datatable_carregar(page, timeout=8000)
         except Exception as e:
             logger.warn(f"Falha ao aplicar filtro de rascunho: {e}")
 
@@ -1708,7 +1881,7 @@ def verificar_cadastro(page, funcionario: dict, output_manager: OutputManager, m
             if search_input.count() > 0 and search_input.is_visible():
                 search_usado = True
                 search_input.fill(cpf_limpo)
-                page.wait_for_timeout(1000)
+                _aguardar_datatable_carregar(page, timeout=6000)
         except Exception:
             # Sem busca ou falha no campo, segue para varredura
             pass
@@ -1723,11 +1896,32 @@ def verificar_cadastro(page, funcionario: dict, output_manager: OutputManager, m
                 pass
 
             linhas = page.locator("table tbody tr")
+            if linhas.count() == 0:
+                break
+
+            try:
+                texto_primeira_linha = linhas.first.inner_text()
+                if "Nenhum registro" in texto_primeira_linha:
+                    break
+            except Exception:
+                pass
+
             for i in range(linhas.count()):
-                texto = linhas.nth(i).inner_text()
+                linha = linhas.nth(i)
+                texto = linha.inner_text()
                 linhas_texto.append(texto)
-                encontrados = re.findall(r"\\b\\d{11}\\b", texto)
-                if cpf_limpo in encontrados:
+
+                cpf_celula = ""
+                try:
+                    cpf_celula = _somente_digitos(linha.locator("td:nth-child(2)").inner_text())
+                except Exception:
+                    cpf_celula = ""
+
+                if cpf_celula == cpf_limpo:
+                    return True, "CPF encontrado na lista de rascunhos."
+
+                texto_normalizado = _somente_digitos(texto)
+                if cpf_limpo and cpf_limpo in texto_normalizado:
                     return True, "CPF encontrado na lista de rascunhos."
 
             btn_proximo = page.locator("li.paginate_button.next")
@@ -1777,7 +1971,7 @@ def _registrar_evidencia_verificacao(
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     filename = f"verify_fail_{cpf}_{timestamp}__{output_manager.execution_id}.png"
     try:
-        data = page.screenshot(timeout=60000)
+        data = _capturar_screenshot_seguro(page)
         output_manager.save_screenshot_bytes(filename, data)
     except Exception as e:
         logger.warn("Falha ao gerar screenshot de verificacao", details={"erro": str(e)})

@@ -1,16 +1,33 @@
-﻿# Runbook Operacional - ProcessoMetaX
+# Runbook Operacional - ProcessoMetaX
 
 ## Pre-check
-1. Confirmar acesso a rede e caminhos base
-2. Confirmar credenciais/variaveis de ambiente
-3. Confirmar disponibilidade dos sistemas integrados
+1. Confirmar acesso ao `P:\ProcessoMetaX`
+2. Confirmar acesso ao `Z:\T.I\MetaXg`
+3. Confirmar SQL, SharePoint e MetaX disponiveis
+4. Confirmar `.env` valido
 
 ## Execucao
-1. Executar metodo oficial do robo (bat/exe/script ja homologado)
-2. Acompanhar logs em logs/
-3. Validar relatorio e manifesto ao final
+1. Rodar o metodo homologado
+2. Acompanhar o captcha quando o alerta visual aparecer
+3. Conferir o log da execucao
+4. Validar relatorio e manifest ao final
 
 ## Pos-execucao
-1. Conferir classificacao em processados/erros
-2. Registrar incidente se houver erro critico
-3. Atualizar evidencias de auditoria quando aplicavel
+1. Conferir `relatorios`
+2. Conferir `json`
+3. Conferir `fotos\processados` e `fotos\erros`
+4. Conferir envio de e-mail
+
+## Sinais de atencao
+- `INCONSISTENT`
+- `SAVED_NOT_VERIFIED`
+- `FAILED_ACTION`
+- `FAILED_VERIFICATION`
+- falha de escrita em pasta publica
+
+## Evidencias minimas
+- log `.jsonl`
+- manifest parcial
+- manifest final
+- relatorio TXT
+- screenshot ou JSON tecnico quando houver falha de verificacao

@@ -1,27 +1,30 @@
 # Runner MetaXg
 
 ## Objetivo
-Executar o aplicativo com atualizacao automatica, seguindo o padrao de releases na rede e fallback via GitHub.
+Executar o aplicativo com atualizacao automatica e segura a partir de `P:\ProcessoMetaX\releases`, com fallback opcional via GitHub.
 
 ## Arquivos
 - `runner.py`
 - `config.json`
 
 ## Fluxo
-1. Le `version.txt` (default 0.0.0) em `install_dir` (default local `.\_install`).
-2. Busca `latest.json` na rede.
-3. Se falhar, consulta GitHub Releases (se configurado).
-4. Compara versoes (semver).
-5. Se houver update:
-   - baixa ZIP e SHA256
-   - valida SHA256 (obrigatorio)
-   - extrai em staging
-   - move current -> backup
-   - move staging -> current
-   - atualiza `version.txt`
-6. Executa `exe_name` dentro de `app\current`.
+1. Ler `version.txt` em `install_dir`
+2. Buscar `latest.json` na rede
+3. Se configurado, tentar GitHub Releases como fallback
+4. Comparar versao
+5. Baixar ZIP e SHA256
+6. Validar integridade
+7. Extrair em staging
+8. Trocar `current` por `backup`
+9. Executar `MetaXg.exe`
 
-## Schema do latest.json (ASO)
+## Release padrao
+Artefatos esperados:
+- `MetaXg_<versao>.zip`
+- `MetaXg_<versao>.sha256`
+- `latest.json`
+
+## latest.json
 ```json
 {
   "version": "1.2.3",
@@ -30,36 +33,21 @@ Executar o aplicativo com atualizacao automatica, seguindo o padrao de releases 
 }
 ```
 
-## Config.json (runner)
-```json
-{
-  "app_name": "MetaXg",
-  "install_dir": ".\\_install",
-  "network_release_dir": ".\\releases",
-  "network_latest_json": ".\\releases\\latest.json",
-  "github_repo": "GuilhermeBatistaenesa/MetaXg",
-  "exe_name": "MetaXg.exe",
-  "log_file": ".\\_install\\logs\\metax_last_run.log",
-  "prefer_network": false,
-  "allow_prerelease": false,
-  "run_args": [],
-  "log_level": "INFO"
-}
-```
+## Configuracoes principais
+- `install_dir`
+- `network_release_dir`
+- `network_latest_json`
+- `github_repo`
+- `exe_name`
+- `prefer_network`
+- `allow_prerelease`
+- `run_args`
+- `log_level`
 
-## Staging / Backup / Rollback
-- `app\staging`: recebe o zip extraido.
-- `app\backup`: recebe o `current` anterior antes do swap.
-- Rollback automatico se falhar apos mexer em `current`.
+## Comportamento importante
+- Se a rede falhar, o runner tenta continuar com a versao atual
+- Se o SHA256 divergir, o update aborta
+- Se o swap falhar, o rollback e automatico
 
-## Logs
-- `metax_last_run.log` em `install_dir\logs`.
-
-## Variaveis de ambiente (opcional)
-- `METAX_INSTALL_DIR`
-- `METAX_NETWORK_RELEASE_DIR`
-- `METAX_NETWORK_LATEST_JSON`
-- `METAX_LOG_FILE`
-
-## GitHub fallback (opcional)
-- Se `github_repo` estiver vazio/ausente, o runner nao tenta GitHub.
+## Ponto de operacao
+O runner atualiza o aplicativo. Os artefatos operacionais do robo continuam indo para `P:\ProcessoMetaX`.
